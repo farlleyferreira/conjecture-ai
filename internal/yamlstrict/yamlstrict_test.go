@@ -124,6 +124,18 @@ func TestLoad_RejectsDuplicateKeyNested(t *testing.T) {
 	}
 }
 
+func TestLoad_RejectsSecondDocument(t *testing.T) {
+	src := "a: 1\n---\nb: 2\n"
+
+	_, err := Load(strings.NewReader(src))
+	if err == nil {
+		t.Fatal("Load() with a second \"---\"-separated document succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "one YAML document") {
+		t.Errorf("Load() error = %v, want it to mention the one-document limit", err)
+	}
+}
+
 func TestLoad_NullScalar(t *testing.T) {
 	root := mustLoad(t, "value: null")
 
