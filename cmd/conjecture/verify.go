@@ -92,6 +92,13 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
+	// A file-level "axioms"/"assumes" clause (see [cjtr.Axioms]'s doc
+	// comment) is likewise only parsed and validated here, not yet
+	// checked against anything, same as a rule-level one on [cjtr.Rule].
+	if _, err := cjtr.Axioms(root, concepts); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
 
 	rules, err := cjtr.Rules(root, area, phenomenon, concepts, observation)
 	if err != nil {

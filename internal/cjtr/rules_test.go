@@ -100,6 +100,43 @@ func TestRules_WhenMismatchesObservation(t *testing.T) {
 	}
 }
 
+func TestRules_Axioms(t *testing.T) {
+	src := `
+rules:
+  shipping is free above the threshold:
+    id: free-above
+    assumes: the balance never goes negative
+`
+	root := loadNode(t, src)
+
+	rules, err := Rules(root, "shipping", "free-shipping", map[string]Concept{}, nil)
+	if err != nil {
+		t.Fatalf("Rules returned unexpected error: %v", err)
+	}
+	if len(rules[0].Axioms) != 1 {
+		t.Fatalf("rules[0].Axioms has %d entries, want 1", len(rules[0].Axioms))
+	}
+	if rules[0].Axioms[0].Text != "the balance never goes negative" {
+		t.Errorf("rules[0].Axioms[0].Text = %q", rules[0].Axioms[0].Text)
+	}
+}
+
+func TestRules_AxiomsVocabularyMistake(t *testing.T) {
+	src := `
+rules:
+  shipping is free above the threshold:
+    id: free-above
+    axioms: the shipping fee sort of resembles 1
+`
+	root := loadNode(t, src)
+	concepts := map[string]Concept{"shipping fee": {Name: "shipping fee"}}
+
+	_, err := Rules(root, "shipping", "free-shipping", concepts, nil)
+	if err == nil {
+		t.Fatal("Rules with an \"axioms\" vocabulary mistake = nil error, want an error")
+	}
+}
+
 func TestRules_UnchangedUndeclaredTerm(t *testing.T) {
 	src := `
 rules:
