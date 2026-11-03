@@ -1,6 +1,7 @@
 package cjtr
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -164,6 +165,51 @@ func TestCheckExample_DetectsViolation(t *testing.T) {
 	}
 	if ok {
 		t.Error("CheckExample(violating row) = true, want false")
+	}
+}
+
+func TestHypotheses_Decisions(t *testing.T) {
+	concepts := loadConceptsForHypotheses(t)
+	src := `
+rules:
+  x:
+    hypotheses:
+      y:
+        always: the shipping fee is at least 0.00
+        decisions:
+          does a coupon applied after the calculation count toward the threshold: "no"
+`
+	root := loadNode(t, src)
+	rulesNode, _ := root.Get("rules")
+	ruleBody := rulesNode.Pairs[0].Value
+
+	hyps, err := Hypotheses(ruleBody, concepts)
+	if err != nil {
+		t.Fatalf("Hypotheses returned unexpected error: %v", err)
+	}
+	want := map[string]string{"does a coupon applied after the calculation count toward the threshold": "no"}
+	if !reflect.DeepEqual(hyps[0].Decisions, want) {
+		t.Errorf("Decisions = %v, want %v", hyps[0].Decisions, want)
+	}
+}
+
+func TestHypotheses_DecisionsNotAMapping(t *testing.T) {
+	concepts := loadConceptsForHypotheses(t)
+	src := `
+rules:
+  x:
+    hypotheses:
+      y:
+        always: the shipping fee is at least 0.00
+        decisions: [not, a, mapping]
+`
+	root := loadNode(t, src)
+	rulesNode, _ := root.Get("rules")
+	ruleBody := rulesNode.Pairs[0].Value
+
+	_, err := Hypotheses(ruleBody, concepts)
+	if err == nil {
+		t.Fatal("Hypotheses with \"decisions\" as a list = nil error, want an error")
 	}
 }
 

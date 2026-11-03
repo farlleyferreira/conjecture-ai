@@ -38,6 +38,14 @@ type Hypothesis struct {
 	// that genuinely cannot supply a concrete value (skip the check?
 	// require it to still resolve with no by-key bindings and fail?).
 	Examples []map[string]string
+
+	// Decisions records recorded human decisions and their rationale
+	// (grammar table: "decisions" -> "<question>: <answer>" -> "examples
+	// and assumptions"), question -> answer, exactly as written. These are
+	// declarative documentation, not statements: nothing here parses or
+	// evaluates them as [Statement]s, matching the grammar table's own
+	// "compiles to" column (they do not compile to a predicate).
+	Decisions map[string]string
 }
 
 // Hypotheses reads a rule body's "hypotheses" mapping, if present. A rule
@@ -149,7 +157,33 @@ func parseHypothesis(name string, body *yamlstrict.Node, concepts map[string]Con
 		h.Examples = examples
 	}
 
+	if decisionsNode, ok := body.Get("decisions"); ok {
+		decisions, err := parseDecisions(decisionsNode, name)
+		if err != nil {
+			return Hypothesis{}, err
+		}
+		h.Decisions = decisions
+	}
+
 	return h, nil
+}
+
+// parseDecisions reads "decisions" (grammar table: "<question>: <answer>")
+// as a plain mapping of question text to answer text - neither side is a
+// [Statement]; see [Hypothesis.Decisions].
+func parseDecisions(node *yamlstrict.Node, hypName string) (map[string]string, error) {
+	if node.Kind != yamlstrict.MappingKind {
+		return nil, fmt.Errorf("cjtr: hypothesis %q: \"decisions\" must be a mapping of question to answer, got %v", hypName, node.Kind)
+	}
+
+	decisions := make(map[string]string, len(node.Pairs))
+	for _, p := range node.Pairs {
+		if p.Value.Kind != yamlstrict.ScalarKind {
+			return nil, fmt.Errorf("cjtr: hypothesis %q: \"decisions\": answer to %q must be a scalar", hypName, p.Key)
+		}
+		decisions[p.Key] = p.Value.Value
+	}
+	return decisions, nil
 }
 
 func parseStatementField(node *yamlstrict.Node, concepts map[string]Concept, hypName, field string) (Statement, error) {
