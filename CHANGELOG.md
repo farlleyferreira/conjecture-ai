@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/farlleyferreira/conjecture-ai/compare/v1.0.1...v1.1.0) (2026-11-03)
+
+
+### Features
+
+* bootstrap OpenSpec capability baseline for conjecture ([#15](https://github.com/farlleyferreira/conjecture-ai/issues/15)) ([fdc440d](https://github.com/farlleyferreira/conjecture-ai/commit/fdc440d4d33e43968e4aeea33b23fd7c8f013951))
+
 ## [1.0.1](https://github.com/farlleyferreira/conjecture-ai/compare/v1.0.0...v1.0.1) (2026-11-03)
 
 
