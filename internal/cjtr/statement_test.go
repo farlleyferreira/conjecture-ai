@@ -69,6 +69,39 @@ func TestParseComparison_RealExampleStatements(t *testing.T) {
 	}
 }
 
+func TestParseComparison_IsBetween(t *testing.T) {
+	got, err := ParseComparison("the shipping fee is between 5.00 and 10.00", exampleConcepts)
+	if err != nil {
+		t.Fatalf("ParseComparison returned unexpected error: %v", err)
+	}
+	want := Statement{Term: "shipping fee", Comparator: "is between", Value: "5.00", Value2: "10.00"}
+	if got != want {
+		t.Errorf("ParseComparison = %+v, want %+v", got, want)
+	}
+}
+
+func TestParseComparison_IsStrictlyBetweenWithConceptBound(t *testing.T) {
+	got, err := ParseComparison("the shipping fee is strictly between the free shipping threshold and 200.00", exampleConcepts)
+	if err != nil {
+		t.Fatalf("ParseComparison returned unexpected error: %v", err)
+	}
+	want := Statement{
+		Term: "shipping fee", Comparator: "is strictly between",
+		Value: "free shipping threshold", ValueIsConcept: true,
+		Value2: "200.00",
+	}
+	if got != want {
+		t.Errorf("ParseComparison = %+v, want %+v", got, want)
+	}
+}
+
+func TestParseComparison_IsBetweenMissingAnd(t *testing.T) {
+	_, err := ParseComparison("the shipping fee is between 5.00", exampleConcepts)
+	if err == nil {
+		t.Fatal("ParseComparison(\"is between\" with no \" and \") = nil error, want an error")
+	}
+}
+
 func TestParseComparison_MissingArticle(t *testing.T) {
 	_, err := ParseComparison("shipping fee is 0.00", exampleConcepts)
 	if err == nil {

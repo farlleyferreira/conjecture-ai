@@ -33,19 +33,33 @@ func Evaluate(stmt Statement, concepts map[string]Concept, tables Tables, bindin
 		return false, fmt.Errorf("cjtr: resolving term %q: %w", stmt.Term, err)
 	}
 
-	valueValue := stmt.Value
-	if stmt.ValueIsConcept {
-		valueConcept, ok := concepts[stmt.Value]
-		if !ok {
-			return false, fmt.Errorf("cjtr: statement's value %q is not a declared concept", stmt.Value)
-		}
-		valueValue, err = resolveValue(valueConcept, concepts, tables, bindings)
-		if err != nil {
-			return false, fmt.Errorf("cjtr: resolving value %q: %w", stmt.Value, err)
-		}
+	valueValue, err := resolveStatementValue(stmt.Value, stmt.ValueIsConcept, concepts, tables, bindings)
+	if err != nil {
+		return false, fmt.Errorf("cjtr: resolving value %q: %w", stmt.Value, err)
 	}
 
-	return compare(stmt.Comparator, termConcept, termValue, valueValue)
+	if !twoValueComparators[stmt.Comparator] {
+		return compare(stmt.Comparator, termConcept, termValue, valueValue, "")
+	}
+
+	value2Value, err := resolveStatementValue(stmt.Value2, stmt.Value2IsConcept, concepts, tables, bindings)
+	if err != nil {
+		return false, fmt.Errorf("cjtr: resolving value %q: %w", stmt.Value2, err)
+	}
+	return compare(stmt.Comparator, termConcept, termValue, valueValue, value2Value)
+}
+
+// resolveStatementValue returns a statement side's value as raw text: the
+// literal text itself, or (when isConcept) that concept's resolved value.
+func resolveStatementValue(text string, isConcept bool, concepts map[string]Concept, tables Tables, bindings Bindings) (string, error) {
+	if !isConcept {
+		return text, nil
+	}
+	concept, ok := concepts[text]
+	if !ok {
+		return "", fmt.Errorf("%q is not a declared concept", text)
+	}
+	return resolveValue(concept, concepts, tables, bindings)
 }
 
 // resolveValue returns a concept's current value as raw text: a constant
@@ -84,7 +98,11 @@ func resolveValue(c Concept, concepts map[string]Concept, tables Tables, binding
 	}
 }
 
-func compare(comparator string, termConcept Concept, termValue, valueValue string) (bool, error) {
+// compare applies comparator to termValue and valueValue; value2Value is
+// only used by the two-value comparators ("is between"/"is strictly
+// between"), where it is the upper bound (Y) and valueValue is the lower
+// bound (X).
+func compare(comparator string, termConcept Concept, termValue, valueValue, value2Value string) (bool, error) {
 	switch comparator {
 	case "is", "equals":
 		return valuesEqual(termConcept, termValue, valueValue)
@@ -99,6 +117,18 @@ func compare(comparator string, termConcept Concept, termValue, valueValue strin
 		return numericCompare(termValue, valueValue, func(c int) bool { return c >= 0 })
 	case "is at most":
 		return numericCompare(termValue, valueValue, func(c int) bool { return c <= 0 })
+	case "is between":
+		geLower, err := numericCompare(termValue, valueValue, func(c int) bool { return c >= 0 })
+		if err != nil || !geLower {
+			return false, err
+		}
+		return numericCompare(termValue, value2Value, func(c int) bool { return c <= 0 })
+	case "is strictly between":
+		gtLower, err := numericCompare(termValue, valueValue, func(c int) bool { return c > 0 })
+		if err != nil || !gtLower {
+			return false, err
+		}
+		return numericCompare(termValue, value2Value, func(c int) bool { return c < 0 })
 	default:
 		// ParseComparison only ever produces a Statement with one of the
 		// comparators above (see statement.go's supportedComparators), so
