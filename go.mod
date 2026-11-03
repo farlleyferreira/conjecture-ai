@@ -1,3 +1,3 @@
 module github.com/farlleyferreira/conjecture-ai
 
-go 1.27.3
+go 1.23
