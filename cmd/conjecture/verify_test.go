@@ -265,6 +265,82 @@ func TestRunVerify_UserDefinedLaw(t *testing.T) {
 	}
 }
 
+// fixtureCjtrWithPhenomenonLevelLaw declares "user_defined_laws" at the
+// file's top level, as a sibling of "rules" - the specification's other
+// documented placement for it ("aninhada no nível onde ela vale...no topo
+// do arquivo, para o fenômeno inteiro"), distinct from
+// fixtureCjtrWithLaw's rule-scoped placement above.
+const fixtureCjtrWithPhenomenonLevelLaw = `
+conjecture: 1.0.0
+
+phenomenon: free shipping above the threshold
+description: "Frete gratis acima de R$ 100 no subtotal com desconto, menos em assinatura."
+
+concepts:
+  discounted subtotal:
+    variable: input.discounted_subtotal
+    type: decimal
+  order type:
+    variable: input.order_type
+    one_of: [regular, subscription]
+  shipping fee:
+    variable: output.shipping_fee
+    type: decimal
+  free shipping threshold:
+    value: 100.00
+
+user_defined_laws:
+  subscription orders never get free shipping:
+    given: the order type is subscription
+    then: the shipping fee is 7.50
+    examples:
+      - {order type: subscription, shipping fee: 7.50}
+
+rules:
+  shipping is free above the threshold:
+    id: free-above
+    hypotheses:
+      the shipping fee is never negative:
+        id: never-negative
+        always: the shipping fee is at least 0.00
+`
+
+func TestRunVerify_PhenomenonLevelLaw(t *testing.T) {
+	path := writeFixture(t, fixtureCjtrWithPhenomenonLevelLaw)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("runVerify exit code = %d, want 0; stdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "shipping::free-shipping: subscription orders never get free shipping") {
+		t.Errorf("stdout should report the phenomenon-level law under the area::phenomenon composite ID, got:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "1/1 examples consistent") {
+		t.Errorf("stdout should report 1/1 consistent example (the rule's own hypothesis declares no examples), got:\n%s", stdout.String())
+	}
+}
+
+func TestRunVerify_PhenomenonLevelLawDetectsViolation(t *testing.T) {
+	broken := strings.Replace(fixtureCjtrWithPhenomenonLevelLaw,
+		"- {order type: subscription, shipping fee: 7.50}",
+		"- {order type: subscription, shipping fee: 0.00}",
+		1,
+	)
+	path := writeFixture(t, broken)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("runVerify exit code = %d, want 1 (the phenomenon-level law's example contradicts its own \"then\")", code)
+	}
+	if !strings.Contains(stdout.String(), "FAIL") {
+		t.Errorf("stdout should report a FAIL, got:\n%s", stdout.String())
+	}
+}
+
 func TestRunVerify_UserDefinedLawDetectsViolation(t *testing.T) {
 	broken := strings.Replace(fixtureCjtrWithLaw,
 		"- {order type: subscription, shipping fee: 7.50}",
