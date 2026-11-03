@@ -1,3 +1,15 @@
+# 1.0.0 (2026-11-03)
+
+
+### Bug Fixes
+
+* skip husky git hooks for semantic-release's automated commit ([#13](https://github.com/farlleyferreira/conjecture-ai/issues/13)) ([d5a6cf8](https://github.com/farlleyferreira/conjecture-ai/commit/d5a6cf81edec326bcd0bb9c13e1b1ca35452387e))
+
+
+### Features
+
+* add semantic commits, versioning, changelog and quality/security pipeline ([#1](https://github.com/farlleyferreira/conjecture-ai/issues/1)) ([4e7dd97](https://github.com/farlleyferreira/conjecture-ai/commit/4e7dd97ba47122acd9f43c3a39e8ec76d33d154e))
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
