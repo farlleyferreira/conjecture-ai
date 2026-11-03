@@ -361,14 +361,16 @@ func TestRunVerify_UserDefinedLawDetectsViolation(t *testing.T) {
 }
 
 // fixtureCjtrWithObservation adds the real worked example's own
-// file-level "observation" and "scope" mappings to fixtureCjtr, with its
-// rule's "when" repeating the declared operation exactly, as the real
-// example does.
+// file-level "observation", "scope", and "simplifications" fields to
+// fixtureCjtr, with its rule's "when" repeating the declared operation
+// exactly, as the real example does.
 const fixtureCjtrWithObservation = `
 conjecture: 1.0.0
 
 phenomenon: free shipping above the threshold
 description: "Frete gratis acima de R$ 100 no subtotal com desconto, menos em assinatura."
+
+simplifications: [domestic shipping only, one delivery per order]
 
 scope:
   inside: [cart, coupon, shipping calculation]
@@ -445,6 +447,22 @@ func TestRunVerify_MalformedScope(t *testing.T) {
 
 	if code != 1 {
 		t.Errorf("runVerify exit code = %d, want 1 (\"scope.inside\" is a scalar, not a list)", code)
+	}
+}
+
+func TestRunVerify_MalformedSimplifications(t *testing.T) {
+	broken := strings.Replace(fixtureCjtrWithObservation,
+		"simplifications: [domestic shipping only, one delivery per order]",
+		"simplifications: domestic shipping only",
+		1,
+	)
+	path := writeFixture(t, broken)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("runVerify exit code = %d, want 1 (\"simplifications\" is a scalar, not a list)", code)
 	}
 }
 
