@@ -24,11 +24,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-go@v5
         with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
-      # TODO: once an application stack is chosen, replace this with real
-      # lint/test/build commands (e.g. `npm run lint`, `npm test`, `npm run build`).
-      - run: echo "No application stack configured yet - nothing to lint/test."
+          go-version-file: go.mod
+          cache: true
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./... -race -cover
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
