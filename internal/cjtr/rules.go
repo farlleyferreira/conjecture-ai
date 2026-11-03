@@ -21,6 +21,10 @@ type Rule struct {
 	ID string
 	// CompositeID is area::phenomenon::ID.
 	CompositeID string
+	// Body is the rule's own mapping node, for reading fields this
+	// package parses separately (e.g. [Hypotheses]) without re-walking
+	// "rules" from the top-level document.
+	Body *yamlstrict.Node
 }
 
 // Rules reads the top-level "rules" mapping of a strictly-loaded .cjtr
@@ -59,7 +63,7 @@ func Rules(root *yamlstrict.Node, area, phenomenon string) ([]Rule, error) {
 			return nil, fmt.Errorf("cjtr: rule %q: %w", name, err)
 		}
 
-		rules = append(rules, Rule{Name: name, ID: idNode.Value, CompositeID: composite})
+		rules = append(rules, Rule{Name: name, ID: idNode.Value, CompositeID: composite, Body: body})
 	}
 
 	return rules, nil

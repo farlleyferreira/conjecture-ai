@@ -54,8 +54,14 @@ func TestRules_RealExample(t *testing.T) {
 		ID:          "free-above",
 		CompositeID: "shipping::free-shipping::free-above",
 	}
-	if got != want {
+	if got.Name != want.Name || got.ID != want.ID || got.CompositeID != want.CompositeID {
 		t.Errorf("Rules()[0] = %+v, want %+v", got, want)
+	}
+	if got.Body == nil || got.Body.Kind != yamlstrict.MappingKind {
+		t.Errorf("Rules()[0].Body = %v, want the rule's mapping node", got.Body)
+	}
+	if _, ok := got.Body.Get("hypotheses"); !ok {
+		t.Error("Rules()[0].Body should expose the rule's own fields (e.g. \"hypotheses\"), but Get(\"hypotheses\") found nothing")
 	}
 }
 
