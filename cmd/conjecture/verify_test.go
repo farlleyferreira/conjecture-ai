@@ -363,7 +363,9 @@ func TestRunVerify_UserDefinedLawDetectsViolation(t *testing.T) {
 // fixtureCjtrWithObservation adds the real worked example's own
 // file-level "observation", "scope", and "simplifications" fields to
 // fixtureCjtr, with its rule's "when" repeating the declared operation
-// exactly, as the real example does.
+// exactly, as the real example does. It also adds a file-level "axioms"
+// entry (observable) and a rule-level "assumes" entry (unobservable),
+// to exercise both at once.
 const fixtureCjtrWithObservation = `
 conjecture: 1.0.0
 
@@ -380,6 +382,8 @@ scope:
 observation:
   operation: the shipping fee is calculated
   interface: HTTP POST /orders/shipping
+
+axioms: the shipping fee is at least 0.00
 
 concepts:
   discounted subtotal:
@@ -398,6 +402,7 @@ rules:
   shipping is free above the threshold:
     id: free-above
     when: the shipping fee is calculated
+    assumes: the balance never goes negative
     hypotheses:
       the shipping fee is never negative:
         id: never-negative
@@ -463,6 +468,25 @@ func TestRunVerify_MalformedSimplifications(t *testing.T) {
 
 	if code != 1 {
 		t.Errorf("runVerify exit code = %d, want 1 (\"simplifications\" is a scalar, not a list)", code)
+	}
+}
+
+func TestRunVerify_AxiomsWithVocabularyMistakeFails(t *testing.T) {
+	// A declared term ("shipping fee") followed by a made-up comparator is
+	// a vocabulary mistake, not an unobservable premise - it must still
+	// fail, not silently fall back to declared text.
+	broken := strings.Replace(fixtureCjtrWithObservation,
+		"axioms: the shipping fee is at least 0.00",
+		"axioms: the shipping fee sort of resembles 1",
+		1,
+	)
+	path := writeFixture(t, broken)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("runVerify exit code = %d, want 1 (a declared term with an unrecognized comparator is a hard error)", code)
 	}
 }
 

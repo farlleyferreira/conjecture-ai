@@ -1,10 +1,18 @@
 package cjtr
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 )
+
+// ErrNoDeclaredConcept is wrapped by [ParseComparison]'s error when text's
+// leading term does not match any declared concept's name - as opposed to
+// matching a concept but then failing on the comparator or value. [Axioms]
+// uses this distinction to decide whether a premise is observable (its
+// term is a declared concept) or not (see [Axiom]'s doc comment).
+var ErrNoDeclaredConcept = errors.New("no declared concept matches the term")
 
 // Statement is a parsed .cjtr comparison of the form
 // "the <term> <comparator> the <concept>" or
@@ -135,7 +143,7 @@ func consumeConceptName(s string, concepts map[string]Concept) (name, rest strin
 		}
 	}
 
-	return "", "", fmt.Errorf("no declared concept matches the term at %q", s)
+	return "", "", fmt.Errorf("%w at %q", ErrNoDeclaredConcept, s)
 }
 
 // consumeComparator finds the longest comparator phrase from the FULL

@@ -8,10 +8,11 @@ import (
 
 // Rule is one rule read from a .cjtr file's top-level "rules" mapping.
 //
-// This only reads a rule's name, declared id, "when", and "unchanged" -
-// not "steps" or "user_defined_laws" at the top of a file (for the whole
-// phenomenon rather than one rule; see [UserDefinedLaws]'s own doc
-// comment for the rule-level case, which this package does implement).
+// This only reads a rule's name, declared id, "when", "unchanged", and
+// "axioms"/"assumes" - not "steps" or "user_defined_laws" at the top of a
+// file (for the whole phenomenon rather than one rule; see
+// [UserDefinedLaws]'s own doc comment for the rule-level case, which this
+// package does implement).
 type Rule struct {
 	// Name is the rule's natural-language key as written, e.g.
 	// "shipping is free above the threshold".
@@ -45,6 +46,11 @@ type Rule struct {
 	// [Rules]'s doc comment) rather than leaving "when" as a bare,
 	// unchecked label.
 	When string
+	// Axioms is the rule's own "axioms"/"assumes" clause, if any (see
+	// [Axioms]'s doc comment - this package does not yet enforce an
+	// observable axiom's Statement against anything, only parses and
+	// validates the clause's shape, same as [Rule.Unchanged]).
+	Axioms []Axiom
 	// Body is the rule's own mapping node, for reading fields this
 	// package parses separately (e.g. [Hypotheses]) without re-walking
 	// "rules" from the top-level document.
@@ -117,7 +123,15 @@ func Rules(root *yamlstrict.Node, area, phenomenon string, concepts map[string]C
 			}
 		}
 
-		rules = append(rules, Rule{Name: name, ID: idNode.Value, CompositeID: composite, Unchanged: unchanged, When: when, Body: body})
+		axioms, err := Axioms(body, concepts)
+		if err != nil {
+			return nil, fmt.Errorf("cjtr: rule %q: %w", name, err)
+		}
+
+		rules = append(rules, Rule{
+			Name: name, ID: idNode.Value, CompositeID: composite,
+			Unchanged: unchanged, When: when, Axioms: axioms, Body: body,
+		})
 	}
 
 	return rules, nil
