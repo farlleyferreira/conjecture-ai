@@ -24,6 +24,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "version":
 		_, _ = fmt.Fprintln(stdout, version.String())
 		return 0
+	case "verify":
+		return runVerify(args[1:], stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
 		return 1
