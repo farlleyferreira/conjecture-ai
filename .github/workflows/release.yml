@@ -27,3 +27,6 @@ jobs:
       - run: npx semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # semantic-release's own release commit should not be gated by the
+          # human commit-msg hook (husky); skip git hooks for this automated commit.
+          HUSKY: 0
