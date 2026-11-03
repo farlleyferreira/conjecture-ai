@@ -3,8 +3,9 @@ package cjtr
 import "testing"
 
 // evaluateExampleConcepts is parsed from the same shape as the worked
-// .cjtr example's "concepts" section (table-lookup concepts omitted,
-// since Concepts() does not support them yet).
+// .cjtr example's "concepts" section (its table-lookup concept omitted:
+// these tests exercise plain variable/constant resolution, which needs no
+// loaded [Tables]; table resolution has its own tests in table_test.go).
 const evaluateExampleConcepts = `
 concepts:
   discounted subtotal:
@@ -90,7 +91,7 @@ func TestEvaluate_RealExampleScenarios(t *testing.T) {
 				t.Fatalf("ParseComparison(%q) returned unexpected error: %v", tt.statement, err)
 			}
 
-			got, err := Evaluate(stmt, concepts, tt.bindings)
+			got, err := Evaluate(stmt, concepts, nil, tt.bindings)
 			if err != nil {
 				t.Fatalf("Evaluate returned unexpected error: %v", err)
 			}
@@ -112,7 +113,7 @@ func TestEvaluate_ExactDecimalEquality(t *testing.T) {
 		t.Fatalf("ParseComparison returned unexpected error: %v", err)
 	}
 
-	got, err := Evaluate(stmt, concepts, Bindings{"input.discounted_subtotal": "100.00"})
+	got, err := Evaluate(stmt, concepts, nil, Bindings{"input.discounted_subtotal": "100.00"})
 	if err != nil {
 		t.Fatalf("Evaluate returned unexpected error: %v", err)
 	}
@@ -129,7 +130,7 @@ func TestEvaluate_UnboundVariable(t *testing.T) {
 		t.Fatalf("ParseComparison returned unexpected error: %v", err)
 	}
 
-	_, err = Evaluate(stmt, concepts, Bindings{})
+	_, err = Evaluate(stmt, concepts, nil, Bindings{})
 	if err == nil {
 		t.Fatal("Evaluate with no binding for the term's variable = nil error, want an error")
 	}
@@ -143,7 +144,7 @@ func TestEvaluate_InvalidDecimal(t *testing.T) {
 		t.Fatalf("ParseComparison returned unexpected error: %v", err)
 	}
 
-	_, err = Evaluate(stmt, concepts, Bindings{"output.shipping_fee": "not a number"})
+	_, err = Evaluate(stmt, concepts, nil, Bindings{"output.shipping_fee": "not a number"})
 	if err == nil {
 		t.Fatal("Evaluate with an unparseable decimal binding = nil error, want an error")
 	}

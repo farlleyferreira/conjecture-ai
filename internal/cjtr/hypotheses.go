@@ -28,12 +28,15 @@ type Hypothesis struct {
 	Then      Statement
 	Otherwise *Statement
 
-	// Examples are concrete rows: concept name -> value as written. A
-	// value may itself be another concept's name (a reference, as
-	// [Statement] values can be) - this package does not resolve that
-	// case yet, since the only concept kind the real example uses as such
-	// a reference is a table-lookup concept, which [Concepts] does not
-	// support.
+	// Examples are concrete rows: concept name -> value as written, as a
+	// literal - not yet as another concept's name (a reference, as
+	// [Statement] values can be). The specification's own worked example
+	// uses such a reference as a placeholder for "whatever the table
+	// concept resolves to" in rows that don't supply a table concept's
+	// by-keys; this package does not resolve that placeholder, since
+	// nothing in the specification says what it should mean for a row
+	// that genuinely cannot supply a concrete value (skip the check?
+	// require it to still resolve with no by-key bindings and fail?).
 	Examples []map[string]string
 }
 
@@ -190,7 +193,7 @@ func parseExamples(node *yamlstrict.Node, hypName string) ([]map[string]string, 
 // otherwise) must itself evaluate to true against the row's own stated
 // values. A false result means the row contradicts the rule it is
 // supposed to illustrate.
-func CheckExample(h Hypothesis, concepts map[string]Concept, example map[string]string) (bool, error) {
+func CheckExample(h Hypothesis, concepts map[string]Concept, tables Tables, example map[string]string) (bool, error) {
 	bindings, err := bindingsFromExample(example, concepts)
 	if err != nil {
 		return false, err
@@ -198,7 +201,7 @@ func CheckExample(h Hypothesis, concepts map[string]Concept, example map[string]
 
 	applicable := h.Then
 	if !h.IsUniversal {
-		holds, err := allHold(h.Given, concepts, bindings)
+		holds, err := allHold(h.Given, concepts, tables, bindings)
 		if err != nil {
 			return false, err
 		}
@@ -210,12 +213,12 @@ func CheckExample(h Hypothesis, concepts map[string]Concept, example map[string]
 		}
 	}
 
-	return Evaluate(applicable, concepts, bindings)
+	return Evaluate(applicable, concepts, tables, bindings)
 }
 
-func allHold(statements []Statement, concepts map[string]Concept, bindings Bindings) (bool, error) {
+func allHold(statements []Statement, concepts map[string]Concept, tables Tables, bindings Bindings) (bool, error) {
 	for _, s := range statements {
-		ok, err := Evaluate(s, concepts, bindings)
+		ok, err := Evaluate(s, concepts, tables, bindings)
 		if err != nil {
 			return false, err
 		}

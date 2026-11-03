@@ -22,13 +22,13 @@ type Bindings map[string]string
 // expression engine, not started): the observable result is the same
 // either way, but nothing here should be mistaken for the real
 // expression-core capability.
-func Evaluate(stmt Statement, concepts map[string]Concept, bindings Bindings) (bool, error) {
+func Evaluate(stmt Statement, concepts map[string]Concept, tables Tables, bindings Bindings) (bool, error) {
 	termConcept, ok := concepts[stmt.Term]
 	if !ok {
 		return false, fmt.Errorf("cjtr: statement's term %q is not a declared concept", stmt.Term)
 	}
 
-	termValue, err := resolveValue(termConcept, bindings)
+	termValue, err := resolveValue(termConcept, concepts, tables, bindings)
 	if err != nil {
 		return false, fmt.Errorf("cjtr: resolving term %q: %w", stmt.Term, err)
 	}
@@ -39,7 +39,7 @@ func Evaluate(stmt Statement, concepts map[string]Concept, bindings Bindings) (b
 		if !ok {
 			return false, fmt.Errorf("cjtr: statement's value %q is not a declared concept", stmt.Value)
 		}
-		valueValue, err = resolveValue(valueConcept, bindings)
+		valueValue, err = resolveValue(valueConcept, concepts, tables, bindings)
 		if err != nil {
 			return false, fmt.Errorf("cjtr: resolving value %q: %w", stmt.Value, err)
 		}
@@ -49,16 +49,39 @@ func Evaluate(stmt Statement, concepts map[string]Concept, bindings Bindings) (b
 }
 
 // resolveValue returns a concept's current value as raw text: a constant
-// concept's declared value, or a variable concept's bound value.
-func resolveValue(c Concept, bindings Bindings) (string, error) {
-	if c.Kind == ConstantConcept {
+// concept's declared value, a variable concept's bound value, or a table
+// concept's looked-up value (see [Table.Lookup]).
+func resolveValue(c Concept, concepts map[string]Concept, tables Tables, bindings Bindings) (string, error) {
+	switch c.Kind {
+	case ConstantConcept:
 		return c.Value, nil
+	case VariableConcept:
+		value, ok := bindings[c.Variable]
+		if !ok {
+			return "", fmt.Errorf("no binding for variable %q", c.Variable)
+		}
+		return value, nil
+	case TableConcept:
+		table, ok := tables[c.Name]
+		if !ok {
+			return "", fmt.Errorf("no loaded table for concept %q", c.Name)
+		}
+		keys := make(map[string]string, len(c.ByKeys))
+		for _, keyName := range c.ByKeys {
+			keyConcept, ok := concepts[keyName]
+			if !ok {
+				return "", fmt.Errorf("table concept %q: by-key %q is not a declared concept", c.Name, keyName)
+			}
+			v, err := resolveValue(keyConcept, concepts, tables, bindings)
+			if err != nil {
+				return "", fmt.Errorf("table concept %q: resolving by-key %q: %w", c.Name, keyName, err)
+			}
+			keys[keyName] = v
+		}
+		return table.Lookup(keys, concepts)
+	default:
+		return "", fmt.Errorf("resolveValue: concept %q has an unknown kind", c.Name)
 	}
-	value, ok := bindings[c.Variable]
-	if !ok {
-		return "", fmt.Errorf("no binding for variable %q", c.Variable)
-	}
-	return value, nil
 }
 
 func compare(comparator string, termConcept Concept, termValue, valueValue string) (bool, error) {
