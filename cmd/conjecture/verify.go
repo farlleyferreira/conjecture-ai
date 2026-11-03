@@ -90,6 +90,14 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 			continue
 		}
 
+		laws, err := cjtr.UserDefinedLaws(rule.Body, concepts)
+		if err != nil {
+			_, _ = fmt.Fprintf(stdout, "%s: %v\n", rule.CompositeID, err)
+			exitCode = 1
+			continue
+		}
+		hyps = append(hyps, laws...)
+
 		for _, h := range hyps {
 			if len(h.Examples) == 0 {
 				_, _ = fmt.Fprintf(stdout, "%s: %s: no examples to check\n", rule.CompositeID, h.Name)

@@ -167,6 +167,73 @@ func TestCheckExample_DetectsViolation(t *testing.T) {
 	}
 }
 
+// ruleWithUserDefinedLaw mirrors the shape of the real worked example's
+// "user_defined_laws" entry ("subscription orders never get free
+// shipping": given order type is subscription, then the shipping fee
+// equals a fixed value) - using a literal instead of the real example's
+// table-concept reference, for the same reason ruleWithHypotheses does.
+const ruleWithUserDefinedLaw = `
+rules:
+  shipping is free above the threshold:
+    id: free-above
+    user_defined_laws:
+      subscription orders never get free shipping:
+        given: the order type is subscription
+        then: the shipping fee is 7.50
+`
+
+func TestUserDefinedLaws_RealExampleShape(t *testing.T) {
+	concepts := loadConceptsForHypotheses(t)
+	root := loadNode(t, ruleWithUserDefinedLaw)
+	rulesNode, _ := root.Get("rules")
+	ruleBody := rulesNode.Pairs[0].Value
+
+	laws, err := UserDefinedLaws(ruleBody, concepts)
+	if err != nil {
+		t.Fatalf("UserDefinedLaws returned unexpected error: %v", err)
+	}
+	if len(laws) != 1 {
+		t.Fatalf("UserDefinedLaws returned %d entries, want 1", len(laws))
+	}
+
+	law := laws[0]
+	if law.Name != "subscription orders never get free shipping" {
+		t.Errorf("law.Name = %q", law.Name)
+	}
+	if len(law.Given) != 1 || law.Given[0].Comparator != "is" {
+		t.Errorf("law.Given = %+v, want one \"is\" statement", law.Given)
+	}
+	if law.Then.Comparator != "is" || law.Then.Value != "7.50" {
+		t.Errorf("law.Then = %+v, want \"is 7.50\"", law.Then)
+	}
+}
+
+func TestUserDefinedLaws_NoKey(t *testing.T) {
+	root := loadNode(t, "rules:\n  x:\n    id: x\n")
+	rulesNode, _ := root.Get("rules")
+	ruleBody := rulesNode.Pairs[0].Value
+
+	laws, err := UserDefinedLaws(ruleBody, map[string]Concept{})
+	if err != nil {
+		t.Fatalf("UserDefinedLaws returned unexpected error: %v", err)
+	}
+	if laws != nil {
+		t.Errorf("UserDefinedLaws with no \"user_defined_laws\" key = %v, want nil", laws)
+	}
+}
+
+func TestUserDefinedLaws_SameValidationAsHypotheses(t *testing.T) {
+	concepts := loadConceptsForHypotheses(t)
+	root := loadNode(t, "rules:\n  x:\n    user_defined_laws:\n      y:\n        id: y\n")
+	rulesNode, _ := root.Get("rules")
+	ruleBody := rulesNode.Pairs[0].Value
+
+	_, err := UserDefinedLaws(ruleBody, concepts)
+	if err == nil {
+		t.Fatal("UserDefinedLaws with neither \"always\" nor \"given\"/\"then\" = nil error, want an error")
+	}
+}
+
 func TestHypotheses_NoHypothesesKey(t *testing.T) {
 	root := loadNode(t, "rules:\n  x:\n    id: x\n")
 	rulesNode, _ := root.Get("rules")

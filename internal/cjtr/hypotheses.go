@@ -44,16 +44,43 @@ type Hypothesis struct {
 // with no "hypotheses" key returns (nil, nil): not every rule needs one
 // (e.g. one that only states "unchanged" clauses).
 func Hypotheses(ruleBody *yamlstrict.Node, concepts map[string]Concept) ([]Hypothesis, error) {
-	hypsNode, ok := ruleBody.Get("hypotheses")
+	return parseHypothesesMapping(ruleBody, "hypotheses", concepts)
+}
+
+// UserDefinedLaws reads a rule body's "user_defined_laws" mapping, if
+// present ("" -> nil, nil, same as [Hypotheses]).
+//
+// A law has the same shape as a hypothesis (the specification's one
+// worked example declares one with plain "given"/"then", and prose
+// elsewhere confirms this: "cada regra tem when, unchanged, steps,
+// user_defined_laws e hypotheses" lists them side by side with no
+// separate grammar of their own) - the difference is only where it comes
+// from: a hypothesis a verifier promotes to law once it survives enough
+// scrutiny, versus a law declared directly here because it is a decision,
+// not something to discover ("the balance never goes negative"). That
+// distinction has no bearing on how one is parsed or checked, so this
+// reuses [Hypothesis] and [parseHypothesis] rather than inventing a
+// separate type.
+//
+// The specification also allows "user_defined_laws" at the top of a file,
+// for the whole phenomenon rather than one rule - that placement is not
+// implemented here, since nothing currently reads a file's top-level
+// mapping the way [Rules] reads a rule's.
+func UserDefinedLaws(ruleBody *yamlstrict.Node, concepts map[string]Concept) ([]Hypothesis, error) {
+	return parseHypothesesMapping(ruleBody, "user_defined_laws", concepts)
+}
+
+func parseHypothesesMapping(body *yamlstrict.Node, key string, concepts map[string]Concept) ([]Hypothesis, error) {
+	node, ok := body.Get(key)
 	if !ok {
 		return nil, nil
 	}
-	if hypsNode.Kind != yamlstrict.MappingKind {
-		return nil, fmt.Errorf("cjtr: \"hypotheses\" must be a mapping of hypothesis name to body, got %v", hypsNode.Kind)
+	if node.Kind != yamlstrict.MappingKind {
+		return nil, fmt.Errorf("cjtr: %q must be a mapping of name to body, got %v", key, node.Kind)
 	}
 
-	hyps := make([]Hypothesis, 0, len(hypsNode.Pairs))
-	for _, p := range hypsNode.Pairs {
+	hyps := make([]Hypothesis, 0, len(node.Pairs))
+	for _, p := range node.Pairs {
 		h, err := parseHypothesis(p.Key, p.Value, concepts)
 		if err != nil {
 			return nil, err
