@@ -9,7 +9,7 @@
   },
   "devDependencies": {
     "@fission-ai/openspec": "^1.16.0",
-    "@commitlint/cli": "^19.5.0",
+    "@commitlint/cli": "^21.2.4",
     "@commitlint/config-conventional": "^19.5.0",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/git": "^10.0.1",
