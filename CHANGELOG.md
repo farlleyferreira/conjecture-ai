@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/farlleyferreira/conjecture-ai/compare/v1.0.0...v1.0.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* drop per-commit commitlint check from CI ([#14](https://github.com/farlleyferreira/conjecture-ai/issues/14)) ([8bf8113](https://github.com/farlleyferreira/conjecture-ai/commit/8bf81133227da50ec722e9e71e48e383bd84b6c5))
+
 # 1.0.0 (2026-11-03)
 
 
