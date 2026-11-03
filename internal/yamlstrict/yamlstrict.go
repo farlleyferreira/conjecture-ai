@@ -59,14 +59,31 @@ func (e *Error) Error() string {
 }
 
 // Load parses r under the strict profile described in the package doc.
+// Exactly one YAML document is allowed: a second "---"-separated document
+// is rejected rather than silently ignored, so content after it can never
+// go unnoticed.
 func Load(r io.Reader) (*Node, error) {
+	dec := yaml.NewDecoder(r)
+
 	var doc yaml.Node
-	if err := yaml.NewDecoder(r).Decode(&doc); err != nil {
+	if err := dec.Decode(&doc); err != nil {
 		return nil, err
 	}
 
 	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
 		return nil, &Error{Reason: "empty document", Line: doc.Line, Column: doc.Column}
+	}
+
+	var extra yaml.Node
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, &Error{
+				Reason: "only one YAML document is allowed per file (found a second \"---\"-separated document)",
+				Line:   extra.Line,
+				Column: extra.Column,
+			}
+		}
+		return nil, err
 	}
 
 	return convert(doc.Content[0])
