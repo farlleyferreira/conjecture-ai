@@ -159,5 +159,5 @@ type xmlFailure struct {
 }
 
 func (f xmlFailure) toFailure() Failure {
-	return Failure{Message: f.Message, Type: f.Type, Text: f.Text}
+	return Failure(f)
 }
