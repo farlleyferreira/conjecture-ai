@@ -8,9 +8,10 @@ import (
 
 // Rule is one rule read from a .cjtr file's top-level "rules" mapping.
 //
-// This only reads a rule's name, declared id, and "unchanged" - not its
-// "when" or "user_defined_laws" (those need more of the vocabulary/grammar
-// work to interpret correctly, and are not implemented yet).
+// This only reads a rule's name, declared id, "when", and "unchanged" -
+// not "steps" or "user_defined_laws" at the top of a file (for the whole
+// phenomenon rather than one rule; see [UserDefinedLaws]'s own doc
+// comment for the rule-level case, which this package does implement).
 type Rule struct {
 	// Name is the rule's natural-language key as written, e.g.
 	// "shipping is free above the threshold".
@@ -34,6 +35,16 @@ type Rule struct {
 	// is the still-unbuilt persistence/evidence-ledger capability, not
 	// this one).
 	Unchanged []string
+	// When names the observation operation this rule attaches to
+	// (grammar table: "when" -> "<observation operation>" -> "Chamada
+	// pelo contrato"), exactly as declared, if any ("" otherwise - not
+	// every rule needs one). See [Observation.Operation]: the
+	// specification's worked example has a file-level "observation"
+	// mapping naming one operation, and its only rule's "when" repeats
+	// that exact text; this package validates that match (see
+	// [Rules]'s doc comment) rather than leaving "when" as a bare,
+	// unchecked label.
+	When string
 	// Body is the rule's own mapping node, for reading fields this
 	// package parses separately (e.g. [Hypotheses]) without re-walking
 	// "rules" from the top-level document.
@@ -49,7 +60,14 @@ type Rule struct {
 // neither of which this function has access to from the parsed content
 // alone. concepts (as returned by [Concepts]) is used only to validate a
 // rule's "unchanged" clause.
-func Rules(root *yamlstrict.Node, area, phenomenon string, concepts map[string]Concept) ([]Rule, error) {
+//
+// observation (as returned by [ReadObservation], nil if the file declares
+// none) validates a rule's "when": the specification gives no other
+// relationship between the two, and its worked example's rule "when"
+// repeats the file's one declared "observation.operation" exactly, so a
+// "when" that names anything else is rejected rather than silently
+// accepted as an unrelated label.
+func Rules(root *yamlstrict.Node, area, phenomenon string, concepts map[string]Concept, observation *Observation) ([]Rule, error) {
 	rulesNode, ok := root.Get("rules")
 	if !ok {
 		return nil, fmt.Errorf("cjtr: missing required top-level \"rules\" key")
@@ -85,7 +103,21 @@ func Rules(root *yamlstrict.Node, area, phenomenon string, concepts map[string]C
 			}
 		}
 
-		rules = append(rules, Rule{Name: name, ID: idNode.Value, CompositeID: composite, Unchanged: unchanged, Body: body})
+		var when string
+		if whenNode, ok := body.Get("when"); ok {
+			if whenNode.Kind != yamlstrict.ScalarKind {
+				return nil, fmt.Errorf("cjtr: rule %q: \"when\" must be a scalar", name)
+			}
+			when = whenNode.Value
+			if observation != nil && when != observation.Operation {
+				return nil, fmt.Errorf(
+					"cjtr: rule %q: \"when\" (%q) does not match the file's declared observation operation (%q)",
+					name, when, observation.Operation,
+				)
+			}
+		}
+
+		rules = append(rules, Rule{Name: name, ID: idNode.Value, CompositeID: composite, Unchanged: unchanged, When: when, Body: body})
 	}
 
 	return rules, nil

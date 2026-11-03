@@ -284,6 +284,73 @@ func TestRunVerify_UserDefinedLawDetectsViolation(t *testing.T) {
 	}
 }
 
+// fixtureCjtrWithObservation adds the real worked example's own
+// file-level "observation" mapping to fixtureCjtr, with its rule's
+// "when" repeating the declared operation exactly, as the real example
+// does.
+const fixtureCjtrWithObservation = `
+conjecture: 1.0.0
+
+phenomenon: free shipping above the threshold
+description: "Frete gratis acima de R$ 100 no subtotal com desconto, menos em assinatura."
+
+observation:
+  operation: the shipping fee is calculated
+  interface: HTTP POST /orders/shipping
+
+concepts:
+  discounted subtotal:
+    variable: input.discounted_subtotal
+    type: decimal
+  order type:
+    variable: input.order_type
+    one_of: [regular, subscription]
+  shipping fee:
+    variable: output.shipping_fee
+    type: decimal
+  free shipping threshold:
+    value: 100.00
+
+rules:
+  shipping is free above the threshold:
+    id: free-above
+    when: the shipping fee is calculated
+    hypotheses:
+      the shipping fee is never negative:
+        id: never-negative
+        always: the shipping fee is at least 0.00
+`
+
+func TestRunVerify_WhenMatchesObservation(t *testing.T) {
+	path := writeFixture(t, fixtureCjtrWithObservation)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("runVerify exit code = %d, want 0; stdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestRunVerify_WhenMismatchesObservation(t *testing.T) {
+	broken := strings.Replace(fixtureCjtrWithObservation,
+		"when: the shipping fee is calculated",
+		"when: a completely different operation",
+		1,
+	)
+	path := writeFixture(t, broken)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("runVerify exit code = %d, want 1 (\"when\" does not match the declared observation operation)", code)
+	}
+	if !strings.Contains(stderr.String(), "does not match") {
+		t.Errorf("stderr should explain the \"when\"/observation mismatch, got %q", stderr.String())
+	}
+}
+
 func TestRunVerify_MissingFile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runVerify([]string{filepath.Join(t.TempDir(), "nope.cjtr")}, &stdout, &stderr)

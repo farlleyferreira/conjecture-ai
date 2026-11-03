@@ -47,7 +47,7 @@ var realExampleConcepts = map[string]Concept{
 func TestRules_RealExample(t *testing.T) {
 	root := loadNode(t, realExample)
 
-	rules, err := Rules(root, "shipping", "free-shipping", realExampleConcepts)
+	rules, err := Rules(root, "shipping", "free-shipping", realExampleConcepts, nil)
 	if err != nil {
 		t.Fatalf("Rules returned unexpected error: %v", err)
 	}
@@ -61,8 +61,9 @@ func TestRules_RealExample(t *testing.T) {
 		ID:          "free-above",
 		CompositeID: "shipping::free-shipping::free-above",
 		Unchanged:   []string{"discounted subtotal", "taxes"},
+		When:        "the shipping fee is calculated",
 	}
-	if got.Name != want.Name || got.ID != want.ID || got.CompositeID != want.CompositeID {
+	if got.Name != want.Name || got.ID != want.ID || got.CompositeID != want.CompositeID || got.When != want.When {
 		t.Errorf("Rules()[0] = %+v, want %+v", got, want)
 	}
 	if len(got.Unchanged) != 2 || got.Unchanged[0] != "discounted subtotal" || got.Unchanged[1] != "taxes" {
@@ -76,6 +77,29 @@ func TestRules_RealExample(t *testing.T) {
 	}
 }
 
+func TestRules_WhenMatchesObservation(t *testing.T) {
+	root := loadNode(t, realExample)
+
+	observation := &Observation{Operation: "the shipping fee is calculated"}
+	rules, err := Rules(root, "shipping", "free-shipping", realExampleConcepts, observation)
+	if err != nil {
+		t.Fatalf("Rules returned unexpected error: %v", err)
+	}
+	if rules[0].When != observation.Operation {
+		t.Errorf("rules[0].When = %q, want %q", rules[0].When, observation.Operation)
+	}
+}
+
+func TestRules_WhenMismatchesObservation(t *testing.T) {
+	root := loadNode(t, realExample)
+
+	observation := &Observation{Operation: "a different operation entirely"}
+	_, err := Rules(root, "shipping", "free-shipping", realExampleConcepts, observation)
+	if err == nil {
+		t.Fatal("Rules with \"when\" not matching the declared observation operation = nil error, want an error")
+	}
+}
+
 func TestRules_UnchangedUndeclaredTerm(t *testing.T) {
 	src := `
 rules:
@@ -85,7 +109,7 @@ rules:
 `
 	root := loadNode(t, src)
 
-	_, err := Rules(root, "shipping", "free-shipping", map[string]Concept{})
+	_, err := Rules(root, "shipping", "free-shipping", map[string]Concept{}, nil)
 	if err == nil {
 		t.Fatal("Rules with \"unchanged\" naming an undeclared concept = nil error, want an error")
 	}
@@ -94,7 +118,7 @@ rules:
 func TestRules_MissingRulesKey(t *testing.T) {
 	root := loadNode(t, "conjecture: 1.0.0\nphenomenon: x\n")
 
-	_, err := Rules(root, "shipping", "free-shipping", nil)
+	_, err := Rules(root, "shipping", "free-shipping", nil, nil)
 	if err == nil {
 		t.Fatal("Rules with no \"rules\" key = nil error, want an error")
 	}
@@ -108,7 +132,7 @@ rules:
 `
 	root := loadNode(t, src)
 
-	_, err := Rules(root, "shipping", "free-shipping", nil)
+	_, err := Rules(root, "shipping", "free-shipping", nil, nil)
 	if err == nil {
 		t.Fatal("Rules with a rule missing \"id\" = nil error, want an error")
 	}
@@ -122,7 +146,7 @@ rules:
 `
 	root := loadNode(t, src)
 
-	_, err := Rules(root, "shipping", "free-shipping", nil)
+	_, err := Rules(root, "shipping", "free-shipping", nil, nil)
 	if err == nil {
 		t.Fatal("Rules with an invalid id segment = nil error, want an error")
 	}
@@ -138,7 +162,7 @@ rules:
 `
 	root := loadNode(t, src)
 
-	rules, err := Rules(root, "shipping", "free-shipping", nil)
+	rules, err := Rules(root, "shipping", "free-shipping", nil, nil)
 	if err != nil {
 		t.Fatalf("Rules returned unexpected error: %v", err)
 	}
