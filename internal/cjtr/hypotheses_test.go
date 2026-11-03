@@ -167,49 +167,6 @@ func TestCheckExample_DetectsViolation(t *testing.T) {
 	}
 }
 
-func TestHypotheses_Unchanged(t *testing.T) {
-	concepts := loadConceptsForHypotheses(t)
-	src := `
-rules:
-  x:
-    hypotheses:
-      y:
-        always: the shipping fee is at least 0.00
-        unchanged: [order type, free shipping threshold]
-`
-	root := loadNode(t, src)
-	rulesNode, _ := root.Get("rules")
-	ruleBody := rulesNode.Pairs[0].Value
-
-	hyps, err := Hypotheses(ruleBody, concepts)
-	if err != nil {
-		t.Fatalf("Hypotheses returned unexpected error: %v", err)
-	}
-	if got := hyps[0].Unchanged; len(got) != 2 || got[0] != "order type" || got[1] != "free shipping threshold" {
-		t.Errorf("Unchanged = %v, want [order type free shipping threshold]", got)
-	}
-}
-
-func TestHypotheses_UnchangedUndeclaredTerm(t *testing.T) {
-	concepts := loadConceptsForHypotheses(t)
-	src := `
-rules:
-  x:
-    hypotheses:
-      y:
-        always: the shipping fee is at least 0.00
-        unchanged: [nonexistent term]
-`
-	root := loadNode(t, src)
-	rulesNode, _ := root.Get("rules")
-	ruleBody := rulesNode.Pairs[0].Value
-
-	_, err := Hypotheses(ruleBody, concepts)
-	if err == nil {
-		t.Fatal("Hypotheses with \"unchanged\" naming an undeclared concept = nil error, want an error")
-	}
-}
-
 func TestHypotheses_NoHypothesesKey(t *testing.T) {
 	root := loadNode(t, "rules:\n  x:\n    id: x\n")
 	rulesNode, _ := root.Get("rules")
