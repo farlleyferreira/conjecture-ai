@@ -79,6 +79,15 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	// "scope" is declarative documentation (see [cjtr.Scope]'s doc
+	// comment) with no effect on verification yet, but is still read and
+	// validated here so a malformed one is caught rather than silently
+	// ignored, same as every other top-level field this command reads.
+	if _, err := cjtr.ReadScope(root); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+
 	rules, err := cjtr.Rules(root, area, phenomenon, concepts, observation)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
