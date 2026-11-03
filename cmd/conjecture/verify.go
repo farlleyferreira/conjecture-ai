@@ -88,6 +88,30 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 	exitCode := 0
 	total, consistent := 0, 0
 
+	// "user_defined_laws" at a file's top level (sibling to "rules", for
+	// the whole phenomenon rather than one rule - see [cjtr.UserDefinedLaws]'s
+	// doc comment) has no rule to scope it under, so it is checked against
+	// the phenomenon's own composite ID (area::phenomenon) - the same
+	// two-segment prefix the cjtr-language spec's "Prefix-based
+	// verification scope" scenario already treats as a valid scope on its
+	// own, not a new convention invented here.
+	phenomenonID, err := cjtr.ComposeID(area, phenomenon)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	fileLaws, err := cjtr.UserDefinedLaws(root, concepts)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	t, c, failed := checkHypotheses(fileLaws, phenomenonID, concepts, tables, stdout)
+	total += t
+	consistent += c
+	if failed {
+		exitCode = 1
+	}
+
 	for _, rule := range rules {
 		hyps, err := cjtr.Hypotheses(rule.Body, concepts)
 		if err != nil {
@@ -104,29 +128,43 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		}
 		hyps = append(hyps, laws...)
 
-		for _, h := range hyps {
-			if len(h.Examples) == 0 {
-				_, _ = fmt.Fprintf(stdout, "%s: %s: no examples to check\n", rule.CompositeID, h.Name)
-				continue
-			}
-			for i, example := range h.Examples {
-				total++
-				ok, err := cjtr.CheckExample(h, concepts, tables, example)
-				switch {
-				case err != nil:
-					_, _ = fmt.Fprintf(stdout, "%s: %s: example %d: ERROR: %v\n", rule.CompositeID, h.Name, i+1, err)
-					exitCode = 1
-				case ok:
-					consistent++
-					_, _ = fmt.Fprintf(stdout, "%s: %s: example %d: PASS\n", rule.CompositeID, h.Name, i+1)
-				default:
-					_, _ = fmt.Fprintf(stdout, "%s: %s: example %d: FAIL (inconsistent with %v)\n", rule.CompositeID, h.Name, i+1, example)
-					exitCode = 1
-				}
-			}
+		t, c, failed := checkHypotheses(hyps, rule.CompositeID, concepts, tables, stdout)
+		total += t
+		consistent += c
+		if failed {
+			exitCode = 1
 		}
 	}
 
 	_, _ = fmt.Fprintf(stdout, "\n%d/%d examples consistent\n", consistent, total)
 	return exitCode
+}
+
+// checkHypotheses checks every hypothesis's (or user-defined law's)
+// declared examples for internal consistency, reporting each one against
+// compositeID, and returns how many were checked, how many were
+// consistent, and whether any error or failure occurred.
+func checkHypotheses(hyps []cjtr.Hypothesis, compositeID string, concepts map[string]cjtr.Concept, tables cjtr.Tables, stdout io.Writer) (total, consistent int, failed bool) {
+	for _, h := range hyps {
+		if len(h.Examples) == 0 {
+			_, _ = fmt.Fprintf(stdout, "%s: %s: no examples to check\n", compositeID, h.Name)
+			continue
+		}
+		for i, example := range h.Examples {
+			total++
+			ok, err := cjtr.CheckExample(h, concepts, tables, example)
+			switch {
+			case err != nil:
+				_, _ = fmt.Fprintf(stdout, "%s: %s: example %d: ERROR: %v\n", compositeID, h.Name, i+1, err)
+				failed = true
+			case ok:
+				consistent++
+				_, _ = fmt.Fprintf(stdout, "%s: %s: example %d: PASS\n", compositeID, h.Name, i+1)
+			default:
+				_, _ = fmt.Fprintf(stdout, "%s: %s: example %d: FAIL (inconsistent with %v)\n", compositeID, h.Name, i+1, example)
+				failed = true
+			}
+		}
+	}
+	return total, consistent, failed
 }
