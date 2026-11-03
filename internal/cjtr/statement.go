@@ -12,6 +12,11 @@ import (
 // formal grammar table gives for "given", "then", "otherwise", and
 // "always" (not for "when" or "steps", which reference an observation
 // operation name instead and are not statements in this sense).
+//
+// "is between" and "is strictly between" are the vocabulary's only
+// two-value comparators (their own table row spells the shape as "is
+// between X and Y"), so they additionally populate Value2/Value2IsConcept;
+// every other comparator leaves those two fields zero.
 type Statement struct {
 	// Term is the left-hand concept name, e.g. "discounted subtotal".
 	Term string
@@ -20,25 +25,37 @@ type Statement struct {
 	Comparator string
 	// Value is the right-hand side: either another concept's name (when
 	// ValueIsConcept) or a literal exactly as written (a number, or a
-	// bareword like "subscription").
+	// bareword like "subscription"). For "is between"/"is strictly
+	// between" this is the lower bound (X).
 	Value          string
 	ValueIsConcept bool
+	// Value2 is the upper bound (Y), set only for "is between"/"is
+	// strictly between".
+	Value2          string
+	Value2IsConcept bool
 }
 
 // supportedComparators are the vocabulary's comparator phrases this parser
-// currently handles, in the exact form "<term> <comparator> <value>" with
-// one value. The vocabulary (see vocabulary.go) also declares comparators
-// this parser deliberately does not support yet: "is between"/"is
-// strictly between" (two values), "is empty"/"is not empty" and
-// "remains"/"does not change" (zero values), and "is one of"/"contains"/
-// "does not contain" (value is a list or needs different handling) - none
-// of those appear in the specification's one worked example, so this
-// parser does not guess at how to handle them.
+// currently handles. The vocabulary (see vocabulary.go) also declares
+// comparators this parser deliberately does not support yet: "is
+// empty"/"is not empty" and "remains"/"does not change" (zero values), and
+// "is one of"/"contains"/"does not contain" (value is a list or needs
+// different handling) - none of those appear in the specification's one
+// worked example, so this parser does not guess at how to handle them.
 var supportedComparators = []string{
 	"is", "equals",
 	"is not", "does not equal",
 	"is greater than", "is less than",
 	"is at least", "is at most",
+	"is between", "is strictly between",
+}
+
+// twoValueComparators are the comparators whose value is a pair "X and Y"
+// rather than a single value - exactly the vocabulary entries whose own
+// table row spells the phrase with two placeholders.
+var twoValueComparators = map[string]bool{
+	"is between":          true,
+	"is strictly between": true,
 }
 
 // ParseComparison parses a .cjtr comparison statement against the given
@@ -65,13 +82,35 @@ func ParseComparison(text string, concepts map[string]Concept) (Statement, error
 		return Statement{}, fmt.Errorf("cjtr: statement %q is missing a value after %q", text, comparator)
 	}
 
-	if valueText, ok := strings.CutPrefix(rest, article); ok {
-		if _, isConcept := concepts[valueText]; isConcept {
-			return Statement{Term: term, Comparator: comparator, Value: valueText, ValueIsConcept: true}, nil
+	if twoValueComparators[comparator] {
+		lower, upper, ok := strings.Cut(rest, " and ")
+		if !ok {
+			return Statement{}, fmt.Errorf("cjtr: statement %q: %q needs two values joined by \" and \"", text, comparator)
 		}
+		lowerValue, lowerIsConcept := resolveStatementSide(lower, concepts)
+		upperValue, upperIsConcept := resolveStatementSide(upper, concepts)
+		return Statement{
+			Term: term, Comparator: comparator,
+			Value: lowerValue, ValueIsConcept: lowerIsConcept,
+			Value2: upperValue, Value2IsConcept: upperIsConcept,
+		}, nil
 	}
 
-	return Statement{Term: term, Comparator: comparator, Value: rest, ValueIsConcept: false}, nil
+	value, isConcept := resolveStatementSide(rest, concepts)
+	return Statement{Term: term, Comparator: comparator, Value: value, ValueIsConcept: isConcept}, nil
+}
+
+// resolveStatementSide reads one value on the right-hand side of a
+// comparator: a concept reference ("the <concept>") when one matches, or
+// the text as a literal otherwise.
+func resolveStatementSide(s string, concepts map[string]Concept) (value string, isConcept bool) {
+	const article = "the "
+	if valueText, ok := strings.CutPrefix(s, article); ok {
+		if _, isConcept := concepts[valueText]; isConcept {
+			return valueText, true
+		}
+	}
+	return s, false
 }
 
 // consumeConceptName finds the longest declared concept name that is a

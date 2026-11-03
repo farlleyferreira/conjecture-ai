@@ -102,6 +102,98 @@ func TestEvaluate_RealExampleScenarios(t *testing.T) {
 	}
 }
 
+func TestEvaluate_IsBetween(t *testing.T) {
+	concepts := loadEvaluateConcepts(t)
+
+	tests := []struct {
+		name      string
+		statement string
+		bindings  Bindings
+		want      bool
+	}{
+		{"inside the range", "the discounted subtotal is between 50.00 and 150.00", Bindings{"input.discounted_subtotal": "100.00"}, true},
+		{"at the lower bound, inclusive", "the discounted subtotal is between 50.00 and 150.00", Bindings{"input.discounted_subtotal": "50.00"}, true},
+		{"at the upper bound, inclusive", "the discounted subtotal is between 50.00 and 150.00", Bindings{"input.discounted_subtotal": "150.00"}, true},
+		{"below the range", "the discounted subtotal is between 50.00 and 150.00", Bindings{"input.discounted_subtotal": "49.99"}, false},
+		{"above the range", "the discounted subtotal is between 50.00 and 150.00", Bindings{"input.discounted_subtotal": "150.01"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := ParseComparison(tt.statement, concepts)
+			if err != nil {
+				t.Fatalf("ParseComparison(%q) returned unexpected error: %v", tt.statement, err)
+			}
+			got, err := Evaluate(stmt, concepts, nil, tt.bindings)
+			if err != nil {
+				t.Fatalf("Evaluate returned unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Evaluate(%q, %v) = %v, want %v", tt.statement, tt.bindings, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEvaluate_IsStrictlyBetween(t *testing.T) {
+	concepts := loadEvaluateConcepts(t)
+
+	tests := []struct {
+		name     string
+		bindings Bindings
+		want     bool
+	}{
+		{"inside the range", Bindings{"input.discounted_subtotal": "100.00"}, true},
+		{"at the lower bound, excluded", Bindings{"input.discounted_subtotal": "50.00"}, false},
+		{"at the upper bound, excluded", Bindings{"input.discounted_subtotal": "150.00"}, false},
+	}
+
+	stmt, err := ParseComparison("the discounted subtotal is strictly between 50.00 and 150.00", concepts)
+	if err != nil {
+		t.Fatalf("ParseComparison returned unexpected error: %v", err)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Evaluate(stmt, concepts, nil, tt.bindings)
+			if err != nil {
+				t.Fatalf("Evaluate returned unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("Evaluate(%v) = %v, want %v", tt.bindings, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEvaluate_IsBetweenWithConceptBound(t *testing.T) {
+	concepts := loadEvaluateConcepts(t)
+
+	// "free shipping threshold" is a constant concept (value 100.00), so
+	// this also checks that a two-value comparator's bound can itself be a
+	// concept reference, not only a literal.
+	stmt, err := ParseComparison("the discounted subtotal is between the free shipping threshold and 200.00", concepts)
+	if err != nil {
+		t.Fatalf("ParseComparison returned unexpected error: %v", err)
+	}
+
+	got, err := Evaluate(stmt, concepts, nil, Bindings{"input.discounted_subtotal": "150.00"})
+	if err != nil {
+		t.Fatalf("Evaluate returned unexpected error: %v", err)
+	}
+	if !got {
+		t.Error("Evaluate(150.00 is between 100.00 and 200.00) = false, want true")
+	}
+
+	got, err = Evaluate(stmt, concepts, nil, Bindings{"input.discounted_subtotal": "99.00"})
+	if err != nil {
+		t.Fatalf("Evaluate returned unexpected error: %v", err)
+	}
+	if got {
+		t.Error("Evaluate(99.00 is between 100.00 and 200.00) = true, want false")
+	}
+}
+
 func TestEvaluate_ExactDecimalEquality(t *testing.T) {
 	concepts := loadEvaluateConcepts(t)
 
