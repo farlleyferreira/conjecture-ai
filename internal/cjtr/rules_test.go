@@ -37,10 +37,17 @@ func loadNode(t *testing.T, src string) *yamlstrict.Node {
 	return n
 }
 
+// realExampleConcepts declares just enough concepts for realExample's own
+// "unchanged" clause ("discounted subtotal", "taxes") to validate.
+var realExampleConcepts = map[string]Concept{
+	"discounted subtotal": {Name: "discounted subtotal"},
+	"taxes":               {Name: "taxes"},
+}
+
 func TestRules_RealExample(t *testing.T) {
 	root := loadNode(t, realExample)
 
-	rules, err := Rules(root, "shipping", "free-shipping")
+	rules, err := Rules(root, "shipping", "free-shipping", realExampleConcepts)
 	if err != nil {
 		t.Fatalf("Rules returned unexpected error: %v", err)
 	}
@@ -53,9 +60,13 @@ func TestRules_RealExample(t *testing.T) {
 		Name:        "shipping is free above the threshold",
 		ID:          "free-above",
 		CompositeID: "shipping::free-shipping::free-above",
+		Unchanged:   []string{"discounted subtotal", "taxes"},
 	}
 	if got.Name != want.Name || got.ID != want.ID || got.CompositeID != want.CompositeID {
 		t.Errorf("Rules()[0] = %+v, want %+v", got, want)
+	}
+	if len(got.Unchanged) != 2 || got.Unchanged[0] != "discounted subtotal" || got.Unchanged[1] != "taxes" {
+		t.Errorf("Rules()[0].Unchanged = %v, want %v", got.Unchanged, want.Unchanged)
 	}
 	if got.Body == nil || got.Body.Kind != yamlstrict.MappingKind {
 		t.Errorf("Rules()[0].Body = %v, want the rule's mapping node", got.Body)
@@ -65,10 +76,25 @@ func TestRules_RealExample(t *testing.T) {
 	}
 }
 
+func TestRules_UnchangedUndeclaredTerm(t *testing.T) {
+	src := `
+rules:
+  shipping is free above the threshold:
+    id: free-above
+    unchanged: [nonexistent term]
+`
+	root := loadNode(t, src)
+
+	_, err := Rules(root, "shipping", "free-shipping", map[string]Concept{})
+	if err == nil {
+		t.Fatal("Rules with \"unchanged\" naming an undeclared concept = nil error, want an error")
+	}
+}
+
 func TestRules_MissingRulesKey(t *testing.T) {
 	root := loadNode(t, "conjecture: 1.0.0\nphenomenon: x\n")
 
-	_, err := Rules(root, "shipping", "free-shipping")
+	_, err := Rules(root, "shipping", "free-shipping", nil)
 	if err == nil {
 		t.Fatal("Rules with no \"rules\" key = nil error, want an error")
 	}
@@ -82,7 +108,7 @@ rules:
 `
 	root := loadNode(t, src)
 
-	_, err := Rules(root, "shipping", "free-shipping")
+	_, err := Rules(root, "shipping", "free-shipping", nil)
 	if err == nil {
 		t.Fatal("Rules with a rule missing \"id\" = nil error, want an error")
 	}
@@ -96,7 +122,7 @@ rules:
 `
 	root := loadNode(t, src)
 
-	_, err := Rules(root, "shipping", "free-shipping")
+	_, err := Rules(root, "shipping", "free-shipping", nil)
 	if err == nil {
 		t.Fatal("Rules with an invalid id segment = nil error, want an error")
 	}
@@ -112,7 +138,7 @@ rules:
 `
 	root := loadNode(t, src)
 
-	rules, err := Rules(root, "shipping", "free-shipping")
+	rules, err := Rules(root, "shipping", "free-shipping", nil)
 	if err != nil {
 		t.Fatalf("Rules returned unexpected error: %v", err)
 	}

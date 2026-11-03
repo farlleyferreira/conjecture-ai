@@ -73,7 +73,7 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	rules, err := cjtr.Rules(root, area, phenomenon)
+	rules, err := cjtr.Rules(root, area, phenomenon, concepts)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
