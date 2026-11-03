@@ -43,7 +43,11 @@ BREAKING CHANGE: Node 20+ is now required.
 ```
 
 Commit messages are validated locally via a `commit-msg` git hook
-([commitlint](https://commitlint.js.org/)) and again in CI on every pull request.
+([commitlint](https://commitlint.js.org/)). In CI, only the **PR title** is
+validated (it becomes the squash commit on `main`, which is what
+semantic-release reads) — individual commits are not linted in CI, so
+automated tools (e.g. Dependabot) can still open PRs without their own
+commit messages being conventional.
 
 ## Versioning & releases
 
