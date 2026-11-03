@@ -39,17 +39,6 @@ type Hypothesis struct {
 	// require it to still resolve with no by-key bindings and fail?).
 	Examples []map[string]string
 
-	// Unchanged lists the declared concept names a "nothing else changes"
-	// clause names (grammar table: "unchanged" -> "list of terms" ->
-	// "clauses \"nothing else changes\""). Parsing only validates that
-	// every name is a declared concept; it does not yet enforce the
-	// clause itself, since that means comparing a term's value across a
-	// pair of executions ("remains"/"does not change", in the
-	// vocabulary), and this package has no cross-execution state to
-	// compare against (that is the still-unbuilt persistence/
-	// evidence-ledger capability, not this one).
-	Unchanged []string
-
 	// Decisions records recorded human decisions and their rationale
 	// (grammar table: "decisions" -> "<question>: <answer>" -> "examples
 	// and assumptions"), question -> answer, exactly as written. These are
@@ -141,14 +130,6 @@ func parseHypothesis(name string, body *yamlstrict.Node, concepts map[string]Con
 		h.Examples = examples
 	}
 
-	if unchangedNode, ok := body.Get("unchanged"); ok {
-		unchanged, err := parseUnchanged(unchangedNode, concepts, name)
-		if err != nil {
-			return Hypothesis{}, err
-		}
-		h.Unchanged = unchanged
-	}
-
 	if decisionsNode, ok := body.Get("decisions"); ok {
 		decisions, err := parseDecisions(decisionsNode, name)
 		if err != nil {
@@ -158,26 +139,6 @@ func parseHypothesis(name string, body *yamlstrict.Node, concepts map[string]Con
 	}
 
 	return h, nil
-}
-
-// parseUnchanged reads "unchanged" (grammar table: a list of terms) and
-// validates every entry names a declared concept.
-func parseUnchanged(node *yamlstrict.Node, concepts map[string]Concept, hypName string) ([]string, error) {
-	if node.Kind != yamlstrict.SequenceKind {
-		return nil, fmt.Errorf("cjtr: hypothesis %q: \"unchanged\" must be a list, got %v", hypName, node.Kind)
-	}
-
-	terms := make([]string, 0, len(node.Items))
-	for _, item := range node.Items {
-		if item.Kind != yamlstrict.ScalarKind {
-			return nil, fmt.Errorf("cjtr: hypothesis %q: every \"unchanged\" entry must be a scalar term name", hypName)
-		}
-		if _, ok := concepts[item.Value]; !ok {
-			return nil, fmt.Errorf("cjtr: hypothesis %q: \"unchanged\" names undeclared concept %q", hypName, item.Value)
-		}
-		terms = append(terms, item.Value)
-	}
-	return terms, nil
 }
 
 // parseDecisions reads "decisions" (grammar table: "<question>: <answer>")
