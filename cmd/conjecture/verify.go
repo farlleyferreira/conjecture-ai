@@ -52,7 +52,22 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 	area := filepath.Base(filepath.Dir(path))
 	phenomenon := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 
+	// A table concept's "table" path (e.g. "bases/shipping-table.csv") is
+	// relative to the conjecture tree's root, the parent of "phenomena/"
+	// - three directories above a phenomenon file at
+	// phenomena/<area>/<phenomenon>.cjtr. The specification never states
+	// this explicitly; it is the only reading that doesn't invent a path
+	// convention of its own, since the worked example's own path comment
+	// and its "bases/" directory both sit beside "phenomena/" that way.
+	conjectureRoot := filepath.Dir(filepath.Dir(filepath.Dir(path)))
+
 	concepts, err := cjtr.Concepts(root)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+
+	tables, err := cjtr.LoadTables(concepts, conjectureRoot)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
@@ -82,7 +97,7 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 			}
 			for i, example := range h.Examples {
 				total++
-				ok, err := cjtr.CheckExample(h, concepts, example)
+				ok, err := cjtr.CheckExample(h, concepts, tables, example)
 				switch {
 				case err != nil:
 					_, _ = fmt.Fprintf(stdout, "%s: %s: example %d: ERROR: %v\n", rule.CompositeID, h.Name, i+1, err)

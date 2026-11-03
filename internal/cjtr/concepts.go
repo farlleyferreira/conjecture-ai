@@ -17,14 +17,18 @@ const (
 	// ConstantConcept is a fixed value declared in the file itself
 	// (declares "value" instead of "variable").
 	ConstantConcept
+	// TableConcept is resolved by looking a row up in an external CSV file
+	// (declares "table" and "by", e.g. the specification's "table shipping
+	// fee" concept). See [Table.Lookup] for how a row is matched and which
+	// column holds the value - the specification's worked example never
+	// names that column, so this package picks the only reading that does
+	// not invent a naming convention it doesn't declare: whichever single
+	// column isn't one of the "by" keys.
+	TableConcept
 )
 
 // Concept is one entry of a .cjtr file's top-level "concepts" mapping: a
 // named, typed quantity that statements refer to by its key phrase.
-//
-// Table-lookup concepts (declaring "table" and "by") are not supported yet
-// - [Concepts] returns a clear error for one rather than silently
-// misreading it.
 type Concept struct {
 	// Name is the concept's key phrase as written, e.g. "discounted subtotal".
 	Name string
@@ -54,6 +58,21 @@ type Concept struct {
 	Min, Max string
 	// OneOf lists the allowed values of a closed-set text concept, when declared.
 	OneOf []string
+
+	// TablePath is the table's CSV path, exactly as written (TableConcept
+	// only), e.g. "bases/shipping-table.csv". It is relative to the
+	// conjecture tree's root (the parent of "phenomena/"), matching the
+	// path comment at the top of the specification's own worked example
+	// file and the "bases/" directory that path implies alongside
+	// "phenomena/" - resolving and loading it is the caller's job (see
+	// [LoadTables]), not [Concepts]'s, since this package's parsing never
+	// touches disk.
+	TablePath string
+	// ByKeys names the table's lookup-key concepts, in declaration order
+	// (TableConcept only). Each name is also a regular entry of the same
+	// map [Concepts] returns, as an ordinary VariableConcept - a by-key is
+	// a concept in every sense except where it's declared.
+	ByKeys []string
 }
 
 // Concepts reads the top-level "concepts" mapping of a strictly-loaded
@@ -69,23 +88,32 @@ func Concepts(root *yamlstrict.Node) (map[string]Concept, error) {
 
 	concepts := make(map[string]Concept, len(conceptsNode.Pairs))
 	for _, p := range conceptsNode.Pairs {
-		c, err := parseConcept(p.Key, p.Value)
+		c, err := parseConcept(p.Key, p.Value, concepts)
 		if err != nil {
 			return nil, err
 		}
-		concepts[p.Key] = c
+		if err := addConcept(concepts, p.Key, c); err != nil {
+			return nil, err
+		}
 	}
 
 	return concepts, nil
 }
 
-func parseConcept(name string, body *yamlstrict.Node) (Concept, error) {
+// addConcept inserts a concept by name, rejecting a collision with one
+// already present - including a by-key a table concept added earlier,
+// since those share the same namespace as every other concept.
+func addConcept(concepts map[string]Concept, name string, c Concept) error {
+	if _, exists := concepts[name]; exists {
+		return fmt.Errorf("cjtr: concept %q is declared more than once (possibly as another table concept's by-key)", name)
+	}
+	concepts[name] = c
+	return nil
+}
+
+func parseConcept(name string, body *yamlstrict.Node, concepts map[string]Concept) (Concept, error) {
 	if body.Kind != yamlstrict.MappingKind {
 		return Concept{}, fmt.Errorf("cjtr: concept %q must be a mapping, got %v", name, body.Kind)
-	}
-
-	if _, ok := body.Get("table"); ok {
-		return Concept{}, fmt.Errorf("cjtr: concept %q: table-lookup concepts are not supported yet", name)
 	}
 
 	c := Concept{Name: name}
@@ -100,12 +128,35 @@ func parseConcept(name string, body *yamlstrict.Node) (Concept, error) {
 		c.Type = typ
 	}
 
+	tablePath, hasTable := scalarField(body, name, "table")
 	variable, hasVariable := scalarField(body, name, "variable")
 	value, hasValue := scalarField(body, name, "value")
 
 	switch {
+	case hasTable && (hasVariable || hasValue):
+		return Concept{}, fmt.Errorf("cjtr: concept %q declares \"table\" together with \"variable\" or \"value\"", name)
 	case hasVariable && hasValue:
 		return Concept{}, fmt.Errorf("cjtr: concept %q declares both \"variable\" and \"value\"", name)
+	case hasTable:
+		byNode, ok := body.Get("by")
+		if !ok {
+			return Concept{}, fmt.Errorf("cjtr: concept %q declares \"table\" but is missing \"by\"", name)
+		}
+		if byNode.Kind != yamlstrict.MappingKind {
+			return Concept{}, fmt.Errorf("cjtr: concept %q: \"by\" must be a mapping of key name to concept, got %v", name, byNode.Kind)
+		}
+		c.Kind = TableConcept
+		c.TablePath = tablePath
+		for _, p := range byNode.Pairs {
+			keyConcept, err := parseByKey(name, p.Key, p.Value)
+			if err != nil {
+				return Concept{}, err
+			}
+			if err := addConcept(concepts, p.Key, keyConcept); err != nil {
+				return Concept{}, err
+			}
+			c.ByKeys = append(c.ByKeys, p.Key)
+		}
 	case hasVariable:
 		c.Kind = VariableConcept
 		c.Variable = variable
@@ -113,7 +164,7 @@ func parseConcept(name string, body *yamlstrict.Node) (Concept, error) {
 		c.Kind = ConstantConcept
 		c.Value = value
 	default:
-		return Concept{}, fmt.Errorf("cjtr: concept %q must declare either \"variable\" or \"value\"", name)
+		return Concept{}, fmt.Errorf("cjtr: concept %q must declare either \"variable\", \"value\", or \"table\"", name)
 	}
 
 	if placesNode, ok := body.Get("places"); ok {
@@ -156,6 +207,33 @@ func parseConcept(name string, body *yamlstrict.Node) (Concept, error) {
 		}
 	}
 
+	return c, nil
+}
+
+// parseByKey parses one entry of a table concept's "by" mapping - a
+// nested concept declaring "label", "variable", "type", and "unit" (the
+// specification's worked example never gives a by-key a "value", "range",
+// "one_of", or "places", so this does not parse those either).
+func parseByKey(tableName, keyName string, body *yamlstrict.Node) (Concept, error) {
+	if body.Kind != yamlstrict.MappingKind {
+		return Concept{}, fmt.Errorf("cjtr: concept %q: by-key %q must be a mapping, got %v", tableName, keyName, body.Kind)
+	}
+
+	variable, ok := scalarField(body, keyName, "variable")
+	if !ok {
+		return Concept{}, fmt.Errorf("cjtr: concept %q: by-key %q must declare \"variable\"", tableName, keyName)
+	}
+
+	c := Concept{Name: keyName, Kind: VariableConcept, Variable: variable}
+	if label, ok := scalarField(body, keyName, "label"); ok {
+		c.Label = label
+	}
+	if unit, ok := scalarField(body, keyName, "unit"); ok {
+		c.Unit = unit
+	}
+	if typ, ok := scalarField(body, keyName, "type"); ok {
+		c.Type = typ
+	}
 	return c, nil
 }
 

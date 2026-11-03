@@ -116,7 +116,7 @@ func TestConcepts_BothVariableAndValue(t *testing.T) {
 	}
 }
 
-func TestConcepts_TableConceptRejected(t *testing.T) {
+func TestConcepts_TableConcept(t *testing.T) {
 	src := `
 concepts:
   table shipping fee:
@@ -124,12 +124,71 @@ concepts:
     table: bases/shipping-table.csv
     by:
       region: {label: regiao, variable: input.region, type: text}
+      weight: {label: peso, variable: input.weight, type: decimal, unit: kg}
+`
+	root := loadNode(t, src)
+
+	concepts, err := Concepts(root)
+	if err != nil {
+		t.Fatalf("Concepts returned unexpected error: %v", err)
+	}
+
+	table, ok := concepts["table shipping fee"]
+	if !ok {
+		t.Fatal(`Concepts did not return "table shipping fee"`)
+	}
+	if table.Kind != TableConcept {
+		t.Errorf("table.Kind = %v, want TableConcept", table.Kind)
+	}
+	if table.TablePath != "bases/shipping-table.csv" {
+		t.Errorf("table.TablePath = %q, want %q", table.TablePath, "bases/shipping-table.csv")
+	}
+	if got := table.ByKeys; len(got) != 2 || got[0] != "region" || got[1] != "weight" {
+		t.Errorf("table.ByKeys = %v, want [region weight] in declaration order", got)
+	}
+
+	region, ok := concepts["region"]
+	if !ok {
+		t.Fatal(`Concepts did not also register the by-key "region" as its own concept`)
+	}
+	if region.Kind != VariableConcept || region.Variable != "input.region" || region.Type != "text" {
+		t.Errorf("region = %+v, want a VariableConcept bound to input.region, type text", region)
+	}
+}
+
+func TestConcepts_TableConceptMissingBy(t *testing.T) {
+	root := loadNode(t, "concepts:\n  x:\n    table: bases/x.csv\n")
+
+	_, err := Concepts(root)
+	if err == nil {
+		t.Fatal("Concepts with a table concept missing \"by\" = nil error, want an error")
+	}
+}
+
+func TestConcepts_TableConceptWithVariable(t *testing.T) {
+	root := loadNode(t, "concepts:\n  x:\n    table: bases/x.csv\n    variable: input.x\n    by:\n      k: {variable: input.k}\n")
+
+	_, err := Concepts(root)
+	if err == nil {
+		t.Fatal("Concepts with a table concept also declaring \"variable\" = nil error, want an error")
+	}
+}
+
+func TestConcepts_TableConceptByKeyCollision(t *testing.T) {
+	src := `
+concepts:
+  region:
+    variable: input.region
+  table shipping fee:
+    table: bases/x.csv
+    by:
+      region: {variable: input.region2}
 `
 	root := loadNode(t, src)
 
 	_, err := Concepts(root)
 	if err == nil {
-		t.Fatal("Concepts with a table concept = nil error, want an error (not supported yet)")
+		t.Fatal("Concepts with a by-key colliding with an existing concept name = nil error, want an error")
 	}
 }
 

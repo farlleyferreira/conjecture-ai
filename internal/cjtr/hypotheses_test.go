@@ -122,7 +122,7 @@ func TestCheckExample_RealExampleRows(t *testing.T) {
 	}
 
 	for i, example := range conditional.Examples {
-		ok, err := CheckExample(conditional, concepts, example)
+		ok, err := CheckExample(conditional, concepts, nil, example)
 		if err != nil {
 			t.Fatalf("CheckExample(row %d = %v) returned unexpected error: %v", i, example, err)
 		}
@@ -158,7 +158,7 @@ func TestCheckExample_DetectsViolation(t *testing.T) {
 		"shipping fee":        "7.50",
 	}
 
-	ok, err := CheckExample(conditional, concepts, violating)
+	ok, err := CheckExample(conditional, concepts, nil, violating)
 	if err != nil {
 		t.Fatalf("CheckExample returned unexpected error: %v", err)
 	}

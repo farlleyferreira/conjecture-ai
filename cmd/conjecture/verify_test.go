@@ -9,9 +9,12 @@ import (
 )
 
 // fixtureCjtr adapts the real worked example (conjecture/phenomena/shipping/
-// free-shipping.cjtr) end to end, with the same adaptation used in
-// internal/cjtr's own tests: the "otherwise" branch uses a plain decimal
-// threshold instead of a table-lookup concept, which is not supported yet.
+// free-shipping.cjtr) end to end: its "otherwise" branch uses a plain
+// decimal threshold instead of the real example's table-lookup concept, to
+// keep this fixture self-contained (no CSV file alongside it). Table
+// concepts are exercised by their own CLI fixture below
+// (fixtureCjtrWithTable / TestRunVerify_TableConcept), and more thoroughly
+// by internal/cjtr's own tests.
 const fixtureCjtr = `
 conjecture: 1.0.0
 
@@ -101,6 +104,112 @@ func TestRunVerify_DetectsViolation(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "FAIL") {
 		t.Errorf("stdout should report a FAIL, got:\n%s", stdout.String())
+	}
+}
+
+// fixtureCjtrWithTable uses the real example's own table concept
+// ("table shipping fee"), exactly as declared in the specification
+// (table: + by: region/weight), instead of adapting it away.
+const fixtureCjtrWithTable = `
+conjecture: 1.0.0
+
+phenomenon: free shipping above the threshold
+description: "Frete gratis acima de R$ 100 no subtotal com desconto, menos em assinatura."
+
+concepts:
+  discounted subtotal:
+    variable: input.discounted_subtotal
+    type: decimal
+  order type:
+    variable: input.order_type
+    one_of: [regular, subscription]
+  shipping fee:
+    variable: output.shipping_fee
+    type: decimal
+  free shipping threshold:
+    value: 100.00
+  table shipping fee:
+    label: frete da tabela
+    table: bases/shipping-table.csv
+    by:
+      region: {label: regiao, variable: input.region, type: text}
+      weight: {label: peso do pacote, variable: input.weight, type: decimal, unit: kg}
+
+rules:
+  shipping is free above the threshold:
+    id: free-above
+    hypotheses:
+      the shipping fee is never negative:
+        id: never-negative
+        always: the shipping fee is at least 0.00
+
+      above the threshold shipping is free:
+        given:
+          - the discounted subtotal is greater than the free shipping threshold
+          - the order type is not subscription
+        then: the shipping fee is 0.00
+        otherwise: the shipping fee equals the table shipping fee
+        examples:
+          - {discounted subtotal: 50.00, order type: regular, region: SP, weight: 1.00, shipping fee: 9.90}
+`
+
+// writeFixtureWithTable writes content under <tmp>/phenomena/shipping/
+// free-shipping.cjtr (like writeFixture) and csv under
+// <tmp>/bases/shipping-table.csv, matching the path convention runVerify
+// uses to resolve a table concept's "table" field (relative to the
+// conjecture tree's root, the parent of "phenomena/").
+func writeFixtureWithTable(t *testing.T, content, csv string) string {
+	t.Helper()
+	root := t.TempDir()
+
+	phenomenaDir := filepath.Join(root, "phenomena", "shipping")
+	if err := os.MkdirAll(phenomenaDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	path := filepath.Join(phenomenaDir, "free-shipping.cjtr")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	basesDir := filepath.Join(root, "bases")
+	if err := os.MkdirAll(basesDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(basesDir, "shipping-table.csv"), []byte(csv), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	return path
+}
+
+func TestRunVerify_TableConcept(t *testing.T) {
+	path := writeFixtureWithTable(t, fixtureCjtrWithTable, "region,weight,fee\nSP,1.00,9.90\nRJ,1.00,12.50\n")
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("runVerify exit code = %d, want 0; stdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "1/1 examples consistent") {
+		t.Errorf("stdout should report 1/1 consistent example, got:\n%s", stdout.String())
+	}
+}
+
+func TestRunVerify_TableConcept_NoMatchingRow(t *testing.T) {
+	// The example's region/weight (SP, 1.00) has no row in this CSV, so
+	// the table lookup itself fails - this should surface as an ERROR for
+	// that example, not a silent pass or a misleading FAIL.
+	path := writeFixtureWithTable(t, fixtureCjtrWithTable, "region,weight,fee\nRJ,1.00,12.50\n")
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("runVerify exit code = %d, want 1 (the table has no matching row)", code)
+	}
+	if !strings.Contains(stdout.String(), "ERROR") {
+		t.Errorf("stdout should report an ERROR for the unresolvable table lookup, got:\n%s", stdout.String())
 	}
 }
 
