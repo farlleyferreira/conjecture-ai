@@ -213,6 +213,77 @@ func TestRunVerify_TableConcept_NoMatchingRow(t *testing.T) {
 	}
 }
 
+// fixtureCjtrWithLaw adds the real worked example's own
+// "user_defined_laws" entry ("subscription orders never get free
+// shipping") to fixtureCjtr, with its own example row, to check that
+// runVerify checks a law's examples the same way it checks a
+// hypothesis's.
+const fixtureCjtrWithLaw = `
+conjecture: 1.0.0
+
+phenomenon: free shipping above the threshold
+description: "Frete gratis acima de R$ 100 no subtotal com desconto, menos em assinatura."
+
+concepts:
+  discounted subtotal:
+    variable: input.discounted_subtotal
+    type: decimal
+  order type:
+    variable: input.order_type
+    one_of: [regular, subscription]
+  shipping fee:
+    variable: output.shipping_fee
+    type: decimal
+  free shipping threshold:
+    value: 100.00
+
+rules:
+  shipping is free above the threshold:
+    id: free-above
+    user_defined_laws:
+      subscription orders never get free shipping:
+        given: the order type is subscription
+        then: the shipping fee is 7.50
+        examples:
+          - {order type: subscription, shipping fee: 7.50}
+`
+
+func TestRunVerify_UserDefinedLaw(t *testing.T) {
+	path := writeFixture(t, fixtureCjtrWithLaw)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("runVerify exit code = %d, want 0; stdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "subscription orders never get free shipping") {
+		t.Errorf("stdout should mention the law's name, got:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "1/1 examples consistent") {
+		t.Errorf("stdout should report 1/1 consistent example, got:\n%s", stdout.String())
+	}
+}
+
+func TestRunVerify_UserDefinedLawDetectsViolation(t *testing.T) {
+	broken := strings.Replace(fixtureCjtrWithLaw,
+		"- {order type: subscription, shipping fee: 7.50}",
+		"- {order type: subscription, shipping fee: 0.00}",
+		1,
+	)
+	path := writeFixture(t, broken)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("runVerify exit code = %d, want 1 (the law's example contradicts its own \"then\")", code)
+	}
+	if !strings.Contains(stdout.String(), "FAIL") {
+		t.Errorf("stdout should report a FAIL, got:\n%s", stdout.String())
+	}
+}
+
 func TestRunVerify_MissingFile(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runVerify([]string{filepath.Join(t.TempDir(), "nope.cjtr")}, &stdout, &stderr)
