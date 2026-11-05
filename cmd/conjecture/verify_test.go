@@ -138,6 +138,44 @@ func TestRunVerify_DetectsViolation(t *testing.T) {
 	}
 }
 
+// fixtureCjtrUnfalsifiable declares a ranged concept and an "always"
+// hypothesis whose bound already holds for the concept's entire
+// declared range, to exercise the falsifiability check
+// (cjtr.Falsifiable) end to end.
+const fixtureCjtrUnfalsifiable = `
+conjecture: 1.0.0
+
+phenomenon: free shipping above the threshold
+
+concepts:
+  shipping fee:
+    variable: output.shipping_fee
+    type: decimal
+    range: {min: 0.00, max: 100000.00}
+
+rules:
+  shipping is free above the threshold:
+    id: free-above
+    hypotheses:
+      the shipping fee is never negative:
+        id: never-negative
+        always: the shipping fee is at least -1.00
+`
+
+func TestRunVerify_DetectsUnfalsifiableHypothesis(t *testing.T) {
+	path := writeFixture(t, fixtureCjtrUnfalsifiable)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("runVerify exit code = %d, want 1 (an unfalsifiable hypothesis should be rejected); stdout:\n%s", code, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "UNFALSIFIABLE") {
+		t.Errorf("stdout should report UNFALSIFIABLE, got:\n%s", stdout.String())
+	}
+}
+
 // fixtureCjtrWithTable uses the real example's own table concept
 // ("table shipping fee"), exactly as declared in the specification
 // (table: + by: region/weight), instead of adapting it away.

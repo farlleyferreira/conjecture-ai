@@ -181,6 +181,26 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 // consistent, and whether any error or failure occurred.
 func checkHypotheses(hyps []cjtr.Hypothesis, compositeID string, concepts map[string]cjtr.Concept, tables cjtr.Tables, stdout io.Writer) (total, consistent int, failed bool) {
 	for _, h := range hyps {
+		// spec-judge's "Falsifiability check": "The judge SHALL reject
+		// any hypothesis that is not written in a way that could be
+		// disproven by a concrete case." Checked against each
+		// statement's own term's declared domain (see
+		// [cjtr.Falsifiable]'s doc comment for what this does and does
+		// not catch) - not an advisory notice like the unconfirmed-
+		// specification one above, since the specification's own
+		// wording is "reject," not "flag."
+		for _, stmt := range unfalsifiabilityCandidates(h) {
+			ok, err := cjtr.Falsifiable(stmt, concepts)
+			switch {
+			case err != nil:
+				_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR checking falsifiability: %v\n", compositeID, h.Name, err)
+				failed = true
+			case !ok:
+				_, _ = fmt.Fprintf(stdout, "%s: %s: UNFALSIFIABLE: %q holds for every value %q's own declared domain allows\n", compositeID, h.Name, formatStatement(stmt), stmt.Term)
+				failed = true
+			}
+		}
+
 		if len(h.Examples) == 0 {
 			_, _ = fmt.Fprintf(stdout, "%s: %s: no examples to check\n", compositeID, h.Name)
 			continue
@@ -202,4 +222,34 @@ func checkHypotheses(hyps []cjtr.Hypothesis, compositeID string, concepts map[st
 		}
 	}
 	return total, consistent, failed
+}
+
+// unfalsifiabilityCandidates returns the statements of h worth checking
+// for falsifiability: Then always, and Otherwise when h declares one.
+// Given is deliberately excluded - it is h's existence condition, not
+// a claim the hypothesis makes, so the specification's falsifiability
+// requirement does not apply to it the same way.
+func unfalsifiabilityCandidates(h cjtr.Hypothesis) []cjtr.Statement {
+	stmts := []cjtr.Statement{h.Then}
+	if h.Otherwise != nil {
+		stmts = append(stmts, *h.Otherwise)
+	}
+	return stmts
+}
+
+// formatStatement renders stmt approximately as it was written, for
+// use in a diagnostic message - not a parser round-trip guarantee.
+func formatStatement(stmt cjtr.Statement) string {
+	value := stmt.Value
+	if stmt.ValueIsConcept {
+		value = "the " + value
+	}
+	if stmt.Value2 == "" {
+		return fmt.Sprintf("the %s %s %s", stmt.Term, stmt.Comparator, value)
+	}
+	value2 := stmt.Value2
+	if stmt.Value2IsConcept {
+		value2 = "the " + value2
+	}
+	return fmt.Sprintf("the %s %s %s and %s", stmt.Term, stmt.Comparator, value, value2)
 }
