@@ -86,6 +86,37 @@ func TestRunVerify_ConsistentExamples(t *testing.T) {
 	if !strings.Contains(stdout.String(), "3/3 examples consistent") {
 		t.Errorf("stdout should report 3/3 consistent examples, got:\n%s", stdout.String())
 	}
+	if !strings.Contains(stdout.String(), "NOTICE") {
+		t.Errorf("stdout should carry the unconfirmed-specification notice (the fixture has no \"signed\" block), got:\n%s", stdout.String())
+	}
+}
+
+func TestRunVerify_ConfirmedFileHasNoNotice(t *testing.T) {
+	path := writeFixture(t, fixtureCjtr+"\nsigned:\n  user: alice\n  confirmed: true\n")
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("runVerify exit code = %d, want 0; stdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String(), "NOTICE") {
+		t.Errorf("stdout should not carry the unconfirmed-specification notice for a confirmed file, got:\n%s", stdout.String())
+	}
+}
+
+func TestRunVerify_SignedButNotConfirmedStillNotices(t *testing.T) {
+	path := writeFixture(t, fixtureCjtr+"\nsigned:\n  user: alice\n  confirmed: false\n")
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("runVerify exit code = %d, want 0; stdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "NOTICE") {
+		t.Errorf("stdout should still carry the unconfirmed-specification notice (signed, but confirmed: false), got:\n%s", stdout.String())
+	}
 }
 
 func TestRunVerify_DetectsViolation(t *testing.T) {
