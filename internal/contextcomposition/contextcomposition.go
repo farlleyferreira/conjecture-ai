@@ -1,19 +1,20 @@
 // Package contextcomposition implements the grounded pieces of the
 // context-composition capability (openspec/specs/context-composition/
-// spec.md): the archive-not-delete lifecycle state and the four
-// composition modes' closed vocabulary.
+// spec.md): the archive-not-delete lifecycle state, the four
+// composition modes' closed vocabulary, and a conflict-precedence
+// order over those four modes (see [PrecedenceOrder]'s own doc comment
+// for where that order comes from - the specification itself gives
+// none).
 //
 // Deliberately not attempted here: the lifecycle commands themselves
 // (list/resume/open/origin/diff/restore need real storage - see
 // internal/persistence - this package only models the state those
 // commands would act on), composition-by-reference's own "does not
 // copy content" rule (a storage-layer property no pure function can
-// check without a real store to point into), and the conflict
-// precedence order ("explicit, documented precedence order" - the
-// specification names that one must exist, not what it is; neither
-// this file nor the product proposal document gives a concrete
-// ordering anywhere, so inventing one here would not be grounded in
-// anything the specification actually says).
+// check without a real store to point into), and resolving a conflict
+// between two sources composed by the *same* mode (see
+// [ResolveConflict]'s own doc comment - this is a separate, still-open
+// question PrecedenceOrder does not answer).
 package contextcomposition
 
 import "fmt"
@@ -114,4 +115,75 @@ func ParseCompositionMode(s string) (CompositionMode, error) {
 	default:
 		return 0, fmt.Errorf("contextcomposition: %q is not a recognized composition mode", s)
 	}
+}
+
+// PrecedenceOrder ranks the four composition modes from highest to
+// lowest authority when two composed contexts conflict over the same
+// value - "explicit conflict precedence... not an unspecified or
+// arbitrary rule." Neither the specification, the archived bootstrap
+// change's design notes, nor the original product proposal document
+// gives a concrete ordering anywhere; this one was constructed at the
+// user's explicit direction, by analogy to how scientific methodology
+// ranks a structure's authority when accounts of the same fact
+// conflict:
+//
+//   - ByReference ranks highest: it points straight at the source's
+//     own current content, unmediated - the analogue of a direct
+//     empirical observation, the least-interpreted form a value can
+//     take.
+//   - ByEmbedding ranks next: a copy taken at composition time - the
+//     analogue of a recorded measurement, one step removed from the
+//     live source but still a direct capture of it, not a derivation.
+//   - ByInheritance ranks next: a context built from a base with its
+//     own overrides layered on top - the analogue of a conclusion
+//     resting on an inherited, less-scrutinized assumption, since an
+//     override introduces content of its own over the base rather than
+//     carrying the base's own value forward unchanged.
+//   - ByView ranks lowest: a filtered or projected read of other
+//     content - the analogue of an interpretive lens, which asserts
+//     nothing new on its own and only reframes what is already there.
+//
+// This resolves a conflict between two *different* modes only. It does
+// not resolve one between two sources composed by the *same* mode
+// (e.g. two ByReference sources disagreeing) - see [ResolveConflict]'s
+// own doc comment for that still-open case.
+var PrecedenceOrder = []CompositionMode{ByReference, ByEmbedding, ByInheritance, ByView}
+
+// rank returns m's index into [PrecedenceOrder] (lower is higher
+// authority), or len(PrecedenceOrder) for a value PrecedenceOrder does
+// not name - which Outranks then treats as never winning, rather than
+// panicking on an invalid mode.
+func rank(m CompositionMode) int {
+	for i, candidate := range PrecedenceOrder {
+		if candidate == m {
+			return i
+		}
+	}
+	return len(PrecedenceOrder)
+}
+
+// Outranks reports whether a's value should win over b's when they
+// conflict over the same node, per [PrecedenceOrder].
+func Outranks(a, b CompositionMode) bool {
+	return rank(a) < rank(b)
+}
+
+// ResolveConflict picks which of two conflicting values to keep by
+// [PrecedenceOrder], reporting the winning mode and whether the
+// outcome was actually decided.
+//
+// decided is false when a and b are the *same* mode: PrecedenceOrder
+// ranks the four modes against each other, not two sources composed
+// the same way, so it gives no basis to prefer one over the other. This
+// is a genuinely open question the specification does not answer
+// either - a caller must not treat ResolveConflict's returned winner as
+// meaningful when decided is false.
+func ResolveConflict(a, b CompositionMode) (winner CompositionMode, decided bool) {
+	if a == b {
+		return a, false
+	}
+	if Outranks(a, b) {
+		return a, true
+	}
+	return b, true
 }
