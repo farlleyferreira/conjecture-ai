@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"strings"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/yamlstrict"
 )
@@ -113,6 +114,51 @@ func ContentHash(raw []byte, root *yamlstrict.Node) ([]byte, error) {
 // lines reproduces exactly that subset's original bytes).
 func splitLinesKeepingTerminators(raw []byte) [][]byte {
 	return bytes.SplitAfter(raw, []byte("\n"))
+}
+
+// PendingMarker is one occurrence of an unresolved "???" marker
+// (spec-authoring spec, "Pending markers block signature": "The system
+// SHALL represent an open question inside a .cjtr file as a ???
+// marker").
+type PendingMarker struct {
+	Line int
+	Text string
+}
+
+// FindPendingMarkers scans raw for every "???" marker occurrence, by
+// line. This scans the file's raw text rather than its parsed
+// structure, and does not try to tell a reserved marker apart from a
+// literal "???" that happens to appear inside, say, a human-written
+// description: "???" is a token the closed .cjtr vocabulary reserves
+// for exactly this purpose, the same way any other word outside that
+// vocabulary is rejected elsewhere in this package rather than given
+// the benefit of the doubt, so this does not add a special case for it
+// appearing to mean something else.
+func FindPendingMarkers(raw []byte) []PendingMarker {
+	var markers []PendingMarker
+	for i, line := range bytes.Split(raw, []byte("\n")) {
+		if bytes.Contains(line, []byte("???")) {
+			markers = append(markers, PendingMarker{Line: i + 1, Text: string(bytes.TrimSpace(line))})
+		}
+	}
+	return markers
+}
+
+// CheckSignable reports an error naming every unresolved "???" marker
+// in raw, or nil if there is none - "A file containing any unresolved
+// ??? marker SHALL NOT be eligible for signature," checked ahead of
+// time rather than only once a signing attempt is already underway.
+func CheckSignable(raw []byte) error {
+	markers := FindPendingMarkers(raw)
+	if len(markers) == 0 {
+		return nil
+	}
+
+	lines := make([]string, len(markers))
+	for i, m := range markers {
+		lines[i] = fmt.Sprintf("line %d: %s", m.Line, m.Text)
+	}
+	return fmt.Errorf("cjtr: %d unresolved \"???\" marker(s) block signing:\n%s", len(markers), strings.Join(lines, "\n"))
 }
 
 // VerifySignature reports whether root's recorded "signed" block's hash
