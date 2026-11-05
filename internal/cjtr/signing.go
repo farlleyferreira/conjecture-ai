@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/yamlstrict"
+	"gopkg.in/yaml.v3"
 )
 
 // Signed is a .cjtr file's top-level "signed" block (spec-authoring
@@ -76,37 +77,51 @@ func ReadSigned(root *yamlstrict.Node) (*Signed, error) {
 // reformatted comment or changed whitespace, must still invalidate the
 // signature.
 func ContentHash(raw []byte, root *yamlstrict.Node) ([]byte, error) {
+	withoutSigned, err := excludeSignedBlock(raw, root)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(withoutSigned)
+	return sum[:], nil
+}
+
+// signedBlockLines locates the top-level "signed" pair's own line and
+// the line the next top-level pair starts at (0 if "signed" is the
+// last pair, meaning "to EOF"), or (0, 0) if root has no "signed" pair
+// at all.
+func signedBlockLines(root *yamlstrict.Node) (signedLine, nextLine int) {
+	for i, p := range root.Pairs {
+		if p.Key == "signed" {
+			if i+1 < len(root.Pairs) {
+				return p.Line, root.Pairs[i+1].Line
+			}
+			return p.Line, 0
+		}
+	}
+	return 0, 0
+}
+
+// excludeSignedBlock returns raw with its top-level "signed" block's
+// own lines removed (raw unchanged if it has none).
+func excludeSignedBlock(raw []byte, root *yamlstrict.Node) ([]byte, error) {
 	if root.Kind != yamlstrict.MappingKind {
 		return nil, fmt.Errorf("cjtr: document root must be a mapping")
 	}
 
-	signedLine, nextLine := 0, 0
-	for i, p := range root.Pairs {
-		if p.Key == "signed" {
-			signedLine = p.Line
-			if i+1 < len(root.Pairs) {
-				nextLine = root.Pairs[i+1].Line
-			}
-			break
-		}
-	}
-
+	signedLine, nextLine := signedBlockLines(root)
 	if signedLine == 0 {
-		sum := sha256.Sum256(raw)
-		return sum[:], nil
+		return raw, nil
 	}
 
 	var kept bytes.Buffer
 	for i, line := range splitLinesKeepingTerminators(raw) {
 		lineNum := i + 1
 		if lineNum >= signedLine && (nextLine == 0 || lineNum < nextLine) {
-			continue // inside the "signed" block - excluded from the hash
+			continue // inside the "signed" block - excluded
 		}
 		kept.Write(line)
 	}
-
-	sum := sha256.Sum256(kept.Bytes())
-	return sum[:], nil
+	return kept.Bytes(), nil
 }
 
 // splitLinesKeepingTerminators splits raw into lines, each line's own
@@ -159,6 +174,68 @@ func CheckSignable(raw []byte) error {
 		lines[i] = fmt.Sprintf("line %d: %s", m.Line, m.Text)
 	}
 	return fmt.Errorf("cjtr: %d unresolved \"???\" marker(s) block signing:\n%s", len(markers), strings.Join(lines, "\n"))
+}
+
+// Sign returns raw with its "signed" block (if any) replaced by a new
+// one recording user, tool, date, and confirmed, and whose hash is
+// raw's current [ContentHash] (computed before any block is removed or
+// added, so re-signing hashes only what was already there, exactly as
+// a first signing would). The new block is always written at the
+// file's end, whether or not an old one existed elsewhere in it: the
+// specification gives no requirement that a re-signed file keep its
+// "signed" block in the same place.
+//
+// Sign refuses - returning an error, with raw itself unchanged - when
+// [CheckSignable] finds an unresolved "???" marker.
+func Sign(raw []byte, root *yamlstrict.Node, user, tool, date string, confirmed bool) ([]byte, error) {
+	if err := CheckSignable(raw); err != nil {
+		return nil, err
+	}
+
+	hash, err := ContentHash(raw, root)
+	if err != nil {
+		return nil, err
+	}
+
+	withoutSigned, err := excludeSignedBlock(raw, root)
+	if err != nil {
+		return nil, err
+	}
+
+	block, err := yaml.Marshal(signedYAML{
+		User: user, Tool: tool, Date: date,
+		Hash: fmt.Sprintf("%x", hash), Confirmed: confirmed,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("cjtr: encoding \"signed\" block: %w", err)
+	}
+
+	var out bytes.Buffer
+	out.Write(withoutSigned)
+	if out.Len() > 0 && out.Bytes()[out.Len()-1] != '\n' {
+		out.WriteByte('\n')
+	}
+	out.WriteString("signed:\n")
+	for _, line := range bytes.Split(bytes.TrimRight(block, "\n"), []byte("\n")) {
+		out.WriteString("  ")
+		out.Write(line)
+		out.WriteByte('\n')
+	}
+
+	return out.Bytes(), nil
+}
+
+// signedYAML is [Signed]'s on-disk shape, marshaled with gopkg.in/
+// yaml.v3 (already this project's one YAML-writing dependency) rather
+// than hand-built strings, so a user- or tool-supplied value that
+// happens to need YAML quoting or escaping (a colon, a quote, …) is
+// still written out as valid YAML.
+type signedYAML struct {
+	User      string `yaml:"user"`
+	Tool      string `yaml:"tool"`
+	Date      string `yaml:"date"`
+	Hash      string `yaml:"hash"`
+	Confirmed bool   `yaml:"confirmed"`
 }
 
 // VerifySignature reports whether root's recorded "signed" block's hash
