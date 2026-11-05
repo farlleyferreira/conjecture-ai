@@ -6,7 +6,27 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
+	"github.com/farlleyferreira/conjecture-ai/internal/yamlstrict"
 )
+
+// signContent returns raw signed via [cjtr.Sign] (user "alice", tool
+// "test", a fixed date, the given confirmed flag) - the same path
+// production signing takes, so these fixtures carry a hash that
+// actually matches their content instead of a hand-typed placeholder.
+func signContent(t *testing.T, raw []byte, confirmed bool) []byte {
+	t.Helper()
+	root, err := yamlstrict.Load(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("yamlstrict.Load failed: %v", err)
+	}
+	signed, err := cjtr.Sign(raw, root, "alice", "test", "2026-01-01", confirmed)
+	if err != nil {
+		t.Fatalf("cjtr.Sign failed: %v", err)
+	}
+	return signed
+}
 
 // fixtureCjtr adapts the real worked example (conjecture/phenomena/shipping/
 // free-shipping.cjtr) end to end: its "otherwise" branch uses a plain
@@ -92,7 +112,8 @@ func TestRunVerify_ConsistentExamples(t *testing.T) {
 }
 
 func TestRunVerify_ConfirmedFileHasNoNotice(t *testing.T) {
-	path := writeFixture(t, fixtureCjtr+"\nsigned:\n  user: alice\n  confirmed: true\n")
+	signed := signContent(t, []byte(fixtureCjtr), true)
+	path := writeFixture(t, string(signed))
 
 	var stdout, stderr bytes.Buffer
 	code := runVerify([]string{path}, &stdout, &stderr)
@@ -106,7 +127,8 @@ func TestRunVerify_ConfirmedFileHasNoNotice(t *testing.T) {
 }
 
 func TestRunVerify_SignedButNotConfirmedStillNotices(t *testing.T) {
-	path := writeFixture(t, fixtureCjtr+"\nsigned:\n  user: alice\n  confirmed: false\n")
+	signed := signContent(t, []byte(fixtureCjtr), false)
+	path := writeFixture(t, string(signed))
 
 	var stdout, stderr bytes.Buffer
 	code := runVerify([]string{path}, &stdout, &stderr)
@@ -116,6 +138,47 @@ func TestRunVerify_SignedButNotConfirmedStillNotices(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "NOTICE") {
 		t.Errorf("stdout should still carry the unconfirmed-specification notice (signed, but confirmed: false), got:\n%s", stdout.String())
+	}
+}
+
+func TestRunVerify_SignedWithWrongHashFails(t *testing.T) {
+	// A hand-typed/corrupted hash (as opposed to one tampered with after
+	// a real signing - see TestRunVerify_DetectsTamperedSignature below)
+	// must be caught the same way: the recorded hash does not match the
+	// file's own content hash either way.
+	path := writeFixture(t, fixtureCjtr+"\nsigned:\n  user: alice\n  confirmed: true\n  hash: 0000000000000000000000000000000000000000000000000000000000000000\n")
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("runVerify exit code = %d, want 1 (the recorded hash does not match the file's content)", code)
+	}
+	if !strings.Contains(stdout.String(), "SIGNATURE INVALID") {
+		t.Errorf("stdout should report SIGNATURE INVALID, got:\n%s", stdout.String())
+	}
+}
+
+func TestRunVerify_DetectsTamperedSignature(t *testing.T) {
+	signed := signContent(t, []byte(fixtureCjtr), true)
+	// Tamper with the content after signing, outside the "signed" block
+	// itself - the exact scenario spec-authoring's invalidation rule
+	// names ("any part of a .cjtr file outside the signed block
+	// changes").
+	tampered := bytes.Replace(signed, []byte("shipping fee: 0.00}"), []byte("shipping fee: 999.00}"), 1)
+	if bytes.Equal(tampered, signed) {
+		t.Fatal("tampering replacement did not match anything in the signed fixture")
+	}
+	path := writeFixture(t, string(tampered))
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("runVerify exit code = %d, want 1 (the signed content was tampered with after signing)", code)
+	}
+	if !strings.Contains(stdout.String(), "SIGNATURE INVALID") {
+		t.Errorf("stdout should report SIGNATURE INVALID, got:\n%s", stdout.String())
 	}
 }
 

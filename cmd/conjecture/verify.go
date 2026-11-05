@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -23,14 +24,13 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 	}
 	path := args[0]
 
-	f, err := os.Open(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
-	defer func() { _ = f.Close() }()
 
-	root, err := yamlstrict.Load(f)
+	root, err := yamlstrict.Load(bytes.NewReader(raw))
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
@@ -58,6 +58,27 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 	}
 	if signed == nil || !signed.Confirmed {
 		_, _ = fmt.Fprintln(stdout, "NOTICE: this specification has not had human review (unconfirmed) and may have been shaped by the drafting model.")
+	}
+
+	// spec-authoring's signature invalidation rule: "any part of a
+	// .cjtr file outside the signed block changes" -> "the recorded
+	// signature no longer matches the file's content hash." Unlike the
+	// unconfirmed NOTICE above (advisory only), a signed file whose
+	// content no longer matches its recorded hash has had its
+	// authorship record falsified by the edit, so this is a hard
+	// failure, not a caveat: the signature exists specifically to make
+	// that tampering detectable.
+	var signatureInvalid bool
+	if signed != nil {
+		valid, err := cjtr.VerifySignature(raw, root)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+			return 1
+		}
+		if !valid {
+			_, _ = fmt.Fprintln(stdout, "SIGNATURE INVALID: the file's content no longer matches its recorded signature hash; it has been modified since it was signed.")
+			signatureInvalid = true
+		}
 	}
 
 	// Per the cjtr-language spec, a file's area is its directory
@@ -121,6 +142,9 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 	}
 
 	exitCode := 0
+	if signatureInvalid {
+		exitCode = 1
+	}
 	total, consistent := 0, 0
 
 	// "user_defined_laws" at a file's top level (sibling to "rules", for
