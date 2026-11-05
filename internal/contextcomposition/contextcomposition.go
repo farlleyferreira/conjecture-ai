@@ -17,7 +17,10 @@
 // question PrecedenceOrder does not answer).
 package contextcomposition
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // LifecycleState is whether a context is still active or has been
 // superseded by a newer one.
@@ -59,6 +62,9 @@ type Context struct {
 	// SupersededBy is the ID of the context that superseded this one,
 	// set only once State is Archived.
 	SupersededBy string
+	// CreatedAt is set only for a context loaded from the store (see
+	// store.go) - the zero value for one built in memory.
+	CreatedAt time.Time
 }
 
 // Supersede returns ctx archived and recording supersededBy -
