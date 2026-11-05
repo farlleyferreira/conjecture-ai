@@ -224,6 +224,83 @@ func TestVerifySignature_InvalidatedByChange(t *testing.T) {
 	}
 }
 
+func TestSign_ProducesVerifiableSignature(t *testing.T) {
+	signedRaw, err := Sign([]byte(unsignedDoc), loadNode(t, unsignedDoc), "alice", "conjecture-cli", "2026-11-05", true)
+	if err != nil {
+		t.Fatalf("Sign returned unexpected error: %v", err)
+	}
+
+	signedRoot := loadNode(t, string(signedRaw))
+	signed, err := ReadSigned(signedRoot)
+	if err != nil {
+		t.Fatalf("ReadSigned returned unexpected error: %v", err)
+	}
+	if signed == nil {
+		t.Fatal("ReadSigned after Sign = nil, want a \"signed\" block")
+	}
+	if signed.User != "alice" || signed.Tool != "conjecture-cli" || signed.Date != "2026-11-05" || !signed.Confirmed {
+		t.Errorf("signed = %+v", signed)
+	}
+
+	ok, err := VerifySignature(signedRaw, signedRoot)
+	if err != nil {
+		t.Fatalf("VerifySignature returned unexpected error: %v", err)
+	}
+	if !ok {
+		t.Error("VerifySignature(Sign(...)) = false, want true")
+	}
+}
+
+func TestSign_RefusesWithPendingMarker(t *testing.T) {
+	src := unsignedDoc + "\nthen: ???\n"
+	_, err := Sign([]byte(src), loadNode(t, src), "alice", "conjecture-cli", "2026-11-05", false)
+	if err == nil {
+		t.Fatal("Sign with an unresolved \"???\" marker = nil error, want an error")
+	}
+}
+
+func TestSign_ReplacesExistingSignedBlock(t *testing.T) {
+	firstPass, err := Sign([]byte(unsignedDoc), loadNode(t, unsignedDoc), "alice", "conjecture-cli", "2026-11-05", false)
+	if err != nil {
+		t.Fatalf("Sign (first) returned unexpected error: %v", err)
+	}
+
+	secondPass, err := Sign(firstPass, loadNode(t, string(firstPass)), "bob", "conjecture-cli", "2026-11-06", true)
+	if err != nil {
+		t.Fatalf("Sign (second) returned unexpected error: %v", err)
+	}
+
+	secondRoot := loadNode(t, string(secondPass))
+	signed, err := ReadSigned(secondRoot)
+	if err != nil {
+		t.Fatalf("ReadSigned returned unexpected error: %v", err)
+	}
+	if signed.User != "bob" || !signed.Confirmed {
+		t.Errorf("re-signing did not take effect: signed = %+v", signed)
+	}
+
+	// Only one "signed" key must exist - yamlstrict's strict profile
+	// itself would reject a duplicate key, so this also proves the old
+	// block's lines were actually removed, not just shadowed.
+	count := 0
+	for _, p := range secondRoot.Pairs {
+		if p.Key == "signed" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("found %d \"signed\" pairs after re-signing, want 1", count)
+	}
+
+	ok, err := VerifySignature(secondPass, secondRoot)
+	if err != nil {
+		t.Fatalf("VerifySignature returned unexpected error: %v", err)
+	}
+	if !ok {
+		t.Error("VerifySignature after re-signing = false, want true")
+	}
+}
+
 func TestVerifySignature_NoSignedBlock(t *testing.T) {
 	root := loadNode(t, unsignedDoc)
 

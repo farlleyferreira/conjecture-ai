@@ -26,6 +26,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "verify":
 		return runVerify(args[1:], stdout, stderr)
+	case "sign":
+		return runSign(args[1:], stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
 		return 1
