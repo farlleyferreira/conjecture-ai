@@ -46,6 +46,20 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	// spec-authoring's "Confirmed flag gates downstream use": an
+	// unconfirmed file's verdicts must carry a visible caveat that the
+	// specification lacked human review. This is advisory, not a
+	// failure - it is printed to stdout alongside the verdict, and does
+	// not affect runVerify's exit code.
+	signed, err := cjtr.ReadSigned(root)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	if signed == nil || !signed.Confirmed {
+		_, _ = fmt.Fprintln(stdout, "NOTICE: this specification has not had human review (unconfirmed) and may have been shaped by the drafting model.")
+	}
+
 	// Per the cjtr-language spec, a file's area is its directory
 	// (conjecture/phenomena/<area>/<phenomenon>.cjtr) and its phenomenon
 	// slug is its filename - neither comes from the file's content.
