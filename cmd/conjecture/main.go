@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/farlleyferreira/conjecture-ai/internal/hardwarescheduler"
 	"github.com/farlleyferreira/conjecture-ai/internal/version"
 )
 
@@ -15,6 +16,16 @@ func main() {
 
 // run executes the CLI with the given arguments and returns the process exit code.
 func run(args []string, stdout, stderr io.Writer) int {
+	// hardware-scheduler's "Minimum hardware requirement": "WHEN
+	// conjecture starts on a machine with less than 6 GB of RAM THEN
+	// the system reports that the minimum hardware requirement is not
+	// met." The specification asks only that this be reported, not
+	// that the command refuse to run, so this warns on stderr without
+	// affecting the exit code.
+	if err := hardwarescheduler.CheckMinimumRAM(); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: warning: %v\n", err)
+	}
+
 	if len(args) == 0 {
 		_, _ = fmt.Fprintln(stderr, "usage: conjecture <command>")
 		return 1
