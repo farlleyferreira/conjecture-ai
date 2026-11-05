@@ -93,7 +93,7 @@ func Falsifiable(stmt Statement, concepts map[string]Concept) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		return !(termMin.Cmp(lower) >= 0 && termMax.Cmp(upper) <= 0), nil
+		return termMin.Cmp(lower) < 0 || termMax.Cmp(upper) > 0, nil
 	case "is strictly between":
 		if stmt.Value2IsConcept {
 			return true, nil
@@ -106,7 +106,7 @@ func Falsifiable(stmt Statement, concepts map[string]Concept) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		return !(termMin.Cmp(lower) > 0 && termMax.Cmp(upper) < 0), nil
+		return termMin.Cmp(lower) <= 0 || termMax.Cmp(upper) >= 0, nil
 	default:
 		return true, nil // not a comparator this check knows how to prove tautological
 	}
