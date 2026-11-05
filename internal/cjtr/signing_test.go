@@ -16,6 +16,44 @@ concepts:
     type: decimal
 `
 
+func TestFindPendingMarkers_None(t *testing.T) {
+	markers := FindPendingMarkers([]byte(unsignedDoc))
+	if len(markers) != 0 {
+		t.Errorf("FindPendingMarkers = %v, want none", markers)
+	}
+}
+
+func TestFindPendingMarkers_Found(t *testing.T) {
+	src := "then: ???\notherwise: the shipping fee is ???\n"
+
+	markers := FindPendingMarkers([]byte(src))
+	if len(markers) != 2 {
+		t.Fatalf("len(FindPendingMarkers) = %d, want 2", len(markers))
+	}
+	if markers[0].Line != 1 || markers[0].Text != "then: ???" {
+		t.Errorf("markers[0] = %+v", markers[0])
+	}
+	if markers[1].Line != 2 || markers[1].Text != "otherwise: the shipping fee is ???" {
+		t.Errorf("markers[1] = %+v", markers[1])
+	}
+}
+
+func TestCheckSignable_NoMarkers(t *testing.T) {
+	if err := CheckSignable([]byte(unsignedDoc)); err != nil {
+		t.Errorf("CheckSignable returned unexpected error: %v", err)
+	}
+}
+
+func TestCheckSignable_BlocksOnMarkers(t *testing.T) {
+	err := CheckSignable([]byte("then: ???\n"))
+	if err == nil {
+		t.Fatal("CheckSignable with an unresolved \"???\" marker = nil error, want an error")
+	}
+	if !strings.Contains(err.Error(), "line 1") {
+		t.Errorf("error = %q, want it to name the marker's line", err.Error())
+	}
+}
+
 func TestReadSigned_NoBlock(t *testing.T) {
 	root := loadNode(t, unsignedDoc)
 
