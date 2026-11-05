@@ -3,6 +3,7 @@ module github.com/farlleyferreira/conjecture-ai
 go 1.23.0
 
 require (
+	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.37.1
