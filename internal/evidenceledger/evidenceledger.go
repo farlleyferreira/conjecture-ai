@@ -18,6 +18,7 @@ package evidenceledger
 import (
 	"bytes"
 	"crypto/sha256"
+	"fmt"
 )
 
 // Stage is one of the four-stage maturity scale's points (Hypothesis,
@@ -46,6 +47,22 @@ func (s Stage) String() string {
 		return "Law"
 	default:
 		return "unknown stage"
+	}
+}
+
+// ParseStage parses s's [Stage.String] form back into a Stage.
+func ParseStage(s string) (Stage, error) {
+	switch s {
+	case "Hypothesis":
+		return Hypothesis, nil
+	case "Thesis":
+		return Thesis, nil
+	case "Theory":
+		return Theory, nil
+	case "Law":
+		return Law, nil
+	default:
+		return 0, fmt.Errorf("evidenceledger: %q is not a recognized stage", s)
 	}
 }
 
