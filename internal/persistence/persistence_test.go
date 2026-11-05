@@ -84,7 +84,7 @@ func TestOpenStoreAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenStoreAt returned unexpected error: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.Ping(); err != nil {
 		t.Fatalf("db.Ping returned unexpected error: %v", err)
@@ -116,13 +116,15 @@ func TestOpenStoreAt_ReopensExistingDatabase(t *testing.T) {
 	if _, err := db1.Exec(`INSERT INTO t (v) VALUES ('hello')`); err != nil {
 		t.Fatalf("INSERT: %v", err)
 	}
-	db1.Close()
+	if err := db1.Close(); err != nil {
+		t.Fatalf("db1.Close returned unexpected error: %v", err)
+	}
 
 	db2, err := OpenStoreAt(dir)
 	if err != nil {
 		t.Fatalf("OpenStoreAt (reopen) returned unexpected error: %v", err)
 	}
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 
 	var got string
 	if err := db2.QueryRow(`SELECT v FROM t`).Scan(&got); err != nil {
