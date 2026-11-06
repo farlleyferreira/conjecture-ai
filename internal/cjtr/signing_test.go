@@ -309,3 +309,39 @@ func TestVerifySignature_NoSignedBlock(t *testing.T) {
 		t.Fatal("VerifySignature on an unsigned file = nil error, want an error")
 	}
 }
+
+func TestStripSignedBlock_RemovesAnExistingBlock(t *testing.T) {
+	signedDoc := unsignedDoc + "signed:\n  user: alice\n  confirmed: true\n"
+
+	got, err := StripSignedBlock([]byte(signedDoc))
+	if err != nil {
+		t.Fatalf("StripSignedBlock returned unexpected error: %v", err)
+	}
+	if strings.Contains(string(got), "signed:") {
+		t.Errorf("StripSignedBlock did not remove the \"signed\" block, got:\n%s", got)
+	}
+	if !strings.Contains(string(got), "phenomenon:") {
+		t.Errorf("StripSignedBlock removed content outside the \"signed\" block, got:\n%s", got)
+	}
+}
+
+func TestStripSignedBlock_UnsignedDocumentIsUnchanged(t *testing.T) {
+	got, err := StripSignedBlock([]byte(unsignedDoc))
+	if err != nil {
+		t.Fatalf("StripSignedBlock returned unexpected error: %v", err)
+	}
+	if string(got) != unsignedDoc {
+		t.Errorf("StripSignedBlock changed an already-unsigned document:\ngot:\n%s\nwant:\n%s", got, unsignedDoc)
+	}
+}
+
+func TestStripSignedBlock_UnparseableInputIsReturnedUnchanged(t *testing.T) {
+	malformed := []byte("not: [valid, yaml: at all")
+	got, err := StripSignedBlock(malformed)
+	if err != nil {
+		t.Fatalf("StripSignedBlock returned unexpected error: %v", err)
+	}
+	if string(got) != string(malformed) {
+		t.Errorf("StripSignedBlock changed unparseable input, got:\n%s\nwant it unchanged", got)
+	}
+}
