@@ -101,6 +101,28 @@ func signedBlockLines(root *yamlstrict.Node) (signedLine, nextLine int) {
 	return 0, 0
 }
 
+// StripSignedBlock returns raw with its top-level "signed" block
+// removed, if it has one (raw unchanged otherwise). Unlike [Sign], it
+// does not require raw be otherwise signable (no pending-marker check)
+// - it exists for a caller that must guarantee no signed block
+// survives regardless of why one might be present, such as llm-
+// orchestration's trust boundary stripping a "signed" block an LLM's
+// draft output included despite being told not to ("no LLM... SHALL
+// be able to... sign a .cjtr file on behalf of a different user").
+//
+// If raw does not parse as a strict-profile YAML document at all,
+// StripSignedBlock returns raw unchanged rather than erroring: a
+// caller that also validates the file (as conjecture verify always
+// does) will surface that parse failure on its own, with a clearer
+// message than this function could give out of context.
+func StripSignedBlock(raw []byte) ([]byte, error) {
+	root, err := yamlstrict.Load(bytes.NewReader(raw))
+	if err != nil {
+		return raw, nil
+	}
+	return excludeSignedBlock(raw, root)
+}
+
 // excludeSignedBlock returns raw with its top-level "signed" block's
 // own lines removed (raw unchanged if it has none).
 func excludeSignedBlock(raw []byte, root *yamlstrict.Node) ([]byte, error) {
