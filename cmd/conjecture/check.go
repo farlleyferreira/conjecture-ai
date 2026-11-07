@@ -23,6 +23,16 @@ import (
 
 const checkUsage = "usage: conjecture check <file.cjtr> <docker-image> <command...>"
 
+// lawContestedThreshold is recordEvidence's own default for
+// [userdefinedlaws.MeetsContestedThreshold]'s "configurable threshold"
+// - the specification's own wording ("Empirical counterevidence SHALL
+// accumulate toward a configurable threshold") names no number, so
+// this is this project's own chosen default (not exposed as a flag
+// yet, the same way queue.go's queueAgingRate/queueAgingUnit are
+// fixed CLI-level defaults rather than per-run parameters), not a
+// value the specification gives.
+const lawContestedThreshold = 3
+
 // runCheck implements "conjecture check" - the first command wiring
 // spec-judge, conformance-cycle, and evidence-ledger together into one
 // real loop: for every hypothesis and user-defined law in file, it
@@ -245,17 +255,23 @@ func checkHypothesisConformance(
 //
 // When isLaw is true, this also updates user-defined-laws' own status
 // lifecycle (internal/userdefinedlaws): a Conformant verdict sets the
-// law's status to [userdefinedlaws.Conformant], a NonConformant one to
-// [userdefinedlaws.Violated] - exactly the one transition the
-// specification names a scenario for ("Violation changes status to
-// violated"). An Inconclusive verdict leaves the status unchanged: the
-// specification names no transition for it, so none is invented here.
-// The other statuses ("conformant-under-generalization", "contested",
-// "invalidated") stay unreachable from this path - they need
-// generalization detection, accumulated counterevidence counting, and
-// formal-proof/[userdefinedlaws.ResolveConflict] wiring respectively,
-// none of which this change builds; each is a real, separate gap, not
-// an oversight.
+// law's status to [userdefinedlaws.Conformant] - exactly the scenario
+// the specification names ("Violation changes status to violated" for
+// its NonConformant counterpart below). A NonConformant verdict first
+// records one more piece of accumulated empirical counterevidence
+// ([userdefinedlaws.RecordCounterevidence]) and sets status to
+// [userdefinedlaws.Contested] once that running total crosses
+// lawContestedThreshold (via [userdefinedlaws.MeetsContestedThreshold]
+// - "Empirical counterevidence SHALL accumulate toward a configurable
+// threshold before the law is marked contested"), or to
+// [userdefinedlaws.Violated] otherwise. An Inconclusive verdict leaves
+// the status unchanged: the specification names no transition for it,
+// so none is invented here. The remaining two statuses
+// ("conformant-under-generalization", "invalidated") stay unreachable
+// from this path - they need generalization detection and formal-
+// proof/[userdefinedlaws.ResolveConflict] wiring respectively, neither
+// of which this change builds; each is a real, separate, disclosed
+// gap, not an oversight.
 //
 // "Single-counterexample demotion" is applied for real: a
 // NonConformant verdict demotes the hypothesis one stage below
@@ -322,14 +338,21 @@ func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict c
 	}
 
 	if isLaw {
-		var lawStatus userdefinedlaws.Status
 		switch verdict {
 		case conformancecycle.Conformant:
-			lawStatus = userdefinedlaws.Conformant
+			if err := userdefinedlaws.SetStatus(db, hypothesisID, userdefinedlaws.Conformant); err != nil {
+				_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR recording law status: %v\n", compositeID, h.Name, err)
+			}
 		case conformancecycle.NonConformant:
-			lawStatus = userdefinedlaws.Violated
-		}
-		if verdict == conformancecycle.Conformant || verdict == conformancecycle.NonConformant {
+			count, err := userdefinedlaws.RecordCounterevidence(db, hypothesisID)
+			if err != nil {
+				_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR recording counterevidence: %v\n", compositeID, h.Name, err)
+				break
+			}
+			lawStatus := userdefinedlaws.Violated
+			if userdefinedlaws.MeetsContestedThreshold(count, lawContestedThreshold) {
+				lawStatus = userdefinedlaws.Contested
+			}
 			if err := userdefinedlaws.SetStatus(db, hypothesisID, lawStatus); err != nil {
 				_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR recording law status: %v\n", compositeID, h.Name, err)
 			}
