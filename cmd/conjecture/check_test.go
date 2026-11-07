@@ -17,6 +17,7 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/sandbox"
+	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 )
 
 // fakeImplPath is a fresh build of internal/conformancecycle's own
@@ -117,6 +118,9 @@ func openCheckTestStore(t *testing.T) *sql.DB {
 	if err := evidenceledger.EnsureSchema(db); err != nil {
 		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
 	}
+	if err := workqueue.EnsureSchema(db); err != nil {
+		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
+	}
 	return db
 }
 
@@ -200,6 +204,14 @@ func TestCheckHypothesisConformance_NonConformantFailsAndRecordsCounterexample(t
 	}
 	if !strings.Contains(history[0].Attacked, "counterexample") {
 		t.Errorf("recorded evidence.Attacked = %q, want it to mention the counterexample", history[0].Attacked)
+	}
+
+	items, err := workqueue.List(db)
+	if err != nil {
+		t.Fatalf("workqueue.List returned unexpected error: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "demo-area::demo::shipping-rule::fee-matches" || items[0].Tier != workqueue.Blocker {
+		t.Errorf("queued items = %+v, want one blocker-tier item for the failing hypothesis", items)
 	}
 }
 
