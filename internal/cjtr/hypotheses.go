@@ -255,7 +255,7 @@ func parseExamples(node *yamlstrict.Node, hypName string) ([]map[string]string, 
 // values. A false result means the row contradicts the rule it is
 // supposed to illustrate.
 func CheckExample(h Hypothesis, concepts map[string]Concept, tables Tables, example map[string]string) (bool, error) {
-	bindings, err := bindingsFromExample(example, concepts)
+	bindings, err := BindingsFromExample(example, concepts)
 	if err != nil {
 		return false, err
 	}
@@ -290,10 +290,14 @@ func allHold(statements []Statement, concepts map[string]Concept, tables Tables,
 	return true, nil
 }
 
-// bindingsFromExample turns an example row (concept name -> value as
+// BindingsFromExample turns an example row (concept name -> value as
 // written) into [Bindings] (variable path -> value), by looking up each
-// named concept's declared "variable" path.
-func bindingsFromExample(row map[string]string, concepts map[string]Concept) (Bindings, error) {
+// named concept's declared "variable" path. Exported so a caller
+// outside this package (conformance-cycle's directed sampling, which
+// uses a hypothesis's own worked example as a baseline to vary
+// boundary values around) can reuse this exact conversion instead of
+// maintaining an independent copy of it.
+func BindingsFromExample(row map[string]string, concepts map[string]Concept) (Bindings, error) {
 	bindings := make(Bindings, len(row))
 	for name, value := range row {
 		c, ok := concepts[name]
