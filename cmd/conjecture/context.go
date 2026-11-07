@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/contextcomposition"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
+	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 )
 
 const contextUsage = "usage: conjecture context <list|resume|open|restore> [args]"
@@ -26,12 +28,20 @@ const contextUsage = "usage: conjecture context <list|resume|open|restore> [args
 // This surface also does not implement "list"/"search" filtering by
 // area, date, or tags (the same table: "lists by name, area, date and
 // tags"), since nothing stores an area or tags for a context yet - see
-// [contextcomposition.Context] - nor does "resume" "answer the next
-// work," the table's other stated half of what it does, which needs
-// work-queue integration this codebase has not built either. Every one
-// of these is a real, named gap, not an oversight: each would need its
-// own grounded design, the same way origin/diff's did when they were
-// deferred out of the storage PR this builds on.
+// [contextcomposition.Context]. This is a real, named gap, not an
+// oversight: it would need its own grounded design, the same way
+// origin/diff's did when they were deferred out of the storage PR this
+// builds on.
+//
+// "resume" now also answers the table's other stated half of what it
+// does - the next work to pick up - by reporting [workqueue.Next]'s
+// own highest-priority item alongside the resumed content, now that
+// work-queue has real persistence (internal/workqueue/store.go) to
+// query. It peeks rather than pops: resuming a context is read-only by
+// the requirement this file's own "Prior context resumed" scenario
+// names, and nothing says resuming should also consume queue state -
+// a caller still removes the item via "conjecture queue next" once
+// they act on it.
 //
 // There is also no "conjecture context" command to create a context or
 // add a version in the first place - the product proposal's own
@@ -110,7 +120,9 @@ func contextList(db *sql.DB, stdout, stderr io.Writer) int {
 }
 
 // contextResume implements "conjecture context resume <name>" -
-// restores name's latest version's content for continued use.
+// restores name's latest version's content for continued use, then
+// reports the highest-priority work-queue item (if any) as the next
+// work to pick up (see this file's own doc comment).
 func contextResume(db *sql.DB, args []string, stdout, stderr io.Writer) int {
 	if len(args) != 1 {
 		_, _ = fmt.Fprintln(stderr, "usage: conjecture context resume <name>")
@@ -122,6 +134,21 @@ func contextResume(db *sql.DB, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	_, _ = fmt.Fprintf(stdout, "%s@%s\n%s\n", v.ContextName, v.Tag(), v.Content)
+
+	if err := workqueue.EnsureSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	item, found, err := workqueue.Next(db, time.Now().UTC(), queueAgingRate, queueAgingUnit)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	if !found {
+		_, _ = fmt.Fprintln(stdout, "next work: queue is empty")
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "next work: %s (%s)\n", item.ID, tierString(item.Tier))
 	return 0
 }
 

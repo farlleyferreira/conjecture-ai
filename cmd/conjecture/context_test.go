@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/contextcomposition"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
+	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 )
 
 func openTestContextStore(t *testing.T) *sql.DB {
@@ -102,6 +104,62 @@ func TestContextResume_ReturnsLatestVersionContent(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "old state") {
 		t.Errorf("stdout = %q, should not contain the older version's content", stdout.String())
+	}
+}
+
+func TestContextResume_ReportsEmptyQueue(t *testing.T) {
+	db := openTestContextStore(t)
+	if _, err := contextcomposition.CreateContext(db, "checkout"); err != nil {
+		t.Fatalf("CreateContext returned unexpected error: %v", err)
+	}
+	if _, err := contextcomposition.AddVersion(db, "checkout", "state"); err != nil {
+		t.Fatalf("AddVersion returned unexpected error: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := contextResume(db, []string{"checkout"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contextResume returned exit code %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "next work: queue is empty") {
+		t.Errorf("stdout = %q, want it to report the queue is empty", stdout.String())
+	}
+}
+
+func TestContextResume_ReportsHighestPriorityQueueItem(t *testing.T) {
+	db := openTestContextStore(t)
+	if _, err := contextcomposition.CreateContext(db, "checkout"); err != nil {
+		t.Fatalf("CreateContext returned unexpected error: %v", err)
+	}
+	if _, err := contextcomposition.AddVersion(db, "checkout", "state"); err != nil {
+		t.Fatalf("AddVersion returned unexpected error: %v", err)
+	}
+	if err := workqueue.EnsureSchema(db); err != nil {
+		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := workqueue.Add(db, workqueue.Item{ID: "background-item", Tier: workqueue.Background, CreatedAt: now}); err != nil {
+		t.Fatalf("Add returned unexpected error: %v", err)
+	}
+	if err := workqueue.Add(db, workqueue.Item{ID: "blocker-item", Tier: workqueue.Blocker, CreatedAt: now}); err != nil {
+		t.Fatalf("Add returned unexpected error: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := contextResume(db, []string{"checkout"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contextResume returned exit code %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "next work: blocker-item") {
+		t.Errorf("stdout = %q, want it to report blocker-item as the next work", stdout.String())
+	}
+
+	items, err := workqueue.List(db)
+	if err != nil {
+		t.Fatalf("List returned unexpected error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Errorf("after contextResume, queue has %d items, want 2 (resume must not pop)", len(items))
 	}
 }
 
