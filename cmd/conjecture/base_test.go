@@ -113,6 +113,50 @@ func TestRegisterBase_MissingPath(t *testing.T) {
 	}
 }
 
+func TestRunBaseSearch_WrongArgCount(t *testing.T) {
+	db := openTestKnowledgeStore(t)
+	var stdout, stderr bytes.Buffer
+	code := runBaseSearch(db, []string{}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("runBaseSearch with no query = %d, want 1", code)
+	}
+}
+
+func TestRunBaseSearch_NoMatchesReportsPlainly(t *testing.T) {
+	db := openTestKnowledgeStore(t)
+	var stdout, stderr bytes.Buffer
+	code := runBaseSearch(db, []string{"nothing indexed matches this"}, &stdout, &stderr)
+	if code != 0 {
+		t.Errorf("runBaseSearch with no matches = %d, want 0", code)
+	}
+	if !strings.Contains(stdout.String(), "no matches") {
+		t.Errorf("stdout = %q, want it to report no matches", stdout.String())
+	}
+}
+
+func TestRunBaseAdd_IndexesForSearchImmediately(t *testing.T) {
+	db := openTestKnowledgeStore(t)
+	path := filepath.Join(t.TempDir(), "lgpd.txt")
+	if err := os.WriteFile(path, []byte("o titular pode solicitar a exclusao dos dados"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	var addOut, addErr bytes.Buffer
+	code := runBaseAdd(db, []string{path, "--authority", "reference", "--scope", "project"}, &addOut, &addErr)
+	if code != 0 {
+		t.Fatalf("runBaseAdd = %d, want 0 (stderr: %q)", code, addErr.String())
+	}
+
+	var searchOut, searchErr bytes.Buffer
+	code = runBaseSearch(db, []string{"exclusao"}, &searchOut, &searchErr)
+	if code != 0 {
+		t.Fatalf("runBaseSearch = %d, want 0 (stderr: %q)", code, searchErr.String())
+	}
+	if !strings.Contains(searchOut.String(), path) {
+		t.Errorf("search output = %q, want it to mention %q", searchOut.String(), path)
+	}
+}
+
 func openTestKnowledgeStore(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := persistence.OpenStoreAt(filepath.Join(t.TempDir(), "data"))
