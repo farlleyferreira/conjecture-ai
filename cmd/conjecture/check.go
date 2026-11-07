@@ -11,6 +11,7 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
 	"github.com/farlleyferreira/conjecture-ai/internal/conformancecycle"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
+	"github.com/farlleyferreira/conjecture-ai/internal/omissiondetection"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/sandbox"
 	"github.com/farlleyferreira/conjecture-ai/internal/specjudge"
@@ -152,8 +153,26 @@ func checkHypothesisConformance(
 		return true
 	}
 
-	if len(h.Examples) == 0 {
-		_, _ = fmt.Fprintf(stdout, "%s: %s: no worked example to use as a directed-sampling baseline, skipping conformance check\n", compositeID, h.Name)
+	// omission-detection's "Type A - asserted but not implemented":
+	// "WHEN a statement asserts a behavior but no case or observation
+	// exercises it THEN the system flags it as a Type A omission."
+	// Checked before running anything, not after: with zero generated
+	// cases, CheckHypothesisDirectedSampling would otherwise return
+	// Conformant vacuously (no failure was found because nothing was
+	// ever tried), silently reporting a hypothesis as conformant when
+	// it was never actually exercised - exactly the dishonest outcome
+	// Type A exists to catch instead.
+	var cases []cjtr.Bindings
+	if len(h.Examples) > 0 {
+		var err error
+		cases, err = conformancecycle.DirectedSamplingInputs(h, concepts)
+		if err != nil {
+			_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR: %v\n", compositeID, h.Name, err)
+			return true
+		}
+	}
+	if _, omitted := omissiondetection.CheckTypeA(compositeID+"::"+h.ID, len(cases)); omitted {
+		_, _ = fmt.Fprintf(stdout, "%s: %s: TYPE A OMISSION: asserted but no case or observation exercises it - no worked example, or no input concept with a declared domain to sample\n", compositeID, h.Name)
 		return false
 	}
 
