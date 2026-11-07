@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
+	"github.com/farlleyferreira/conjecture-ai/internal/expressioncore"
 )
 
 // runVerify loads a .cjtr file and checks every hypothesis's declared
@@ -71,6 +72,8 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 	// two-segment prefix the cjtr-language spec's "Prefix-based
 	// verification scope" scenario already treats as a valid scope on its
 	// own, not a new convention invented here.
+	allHyps := append([]cjtr.Hypothesis{}, f.fileLaws...)
+
 	t, c, failed := checkHypotheses(f.fileLaws, f.phenomenonID, concepts, tables, stdout)
 	total += t
 	consistent += c
@@ -93,6 +96,7 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 			continue
 		}
 		hyps = append(hyps, laws...)
+		allHyps = append(allHyps, hyps...)
 
 		t, c, failed := checkHypotheses(hyps, rule.CompositeID, concepts, tables, stdout)
 		total += t
@@ -100,6 +104,16 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		if failed {
 			exitCode = 1
 		}
+	}
+
+	// spec-judge's "Consistency check via solver" - run once, across
+	// every unconditional statement in the whole file, not per rule:
+	// a genuine contradiction is just as real (and just as worth
+	// catching) between two different rules as within one. See
+	// checkConsistency's own doc comment for why only an unconditional
+	// (IsUniversal) statement is ever included.
+	if findings := checkConsistency(allHyps, concepts, expressioncore.Solver{}, stdout); len(findings) > 0 {
+		exitCode = 1
 	}
 
 	_, _ = fmt.Fprintf(stdout, "\n%d/%d examples consistent\n", consistent, total)
