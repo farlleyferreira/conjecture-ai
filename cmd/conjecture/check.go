@@ -186,6 +186,19 @@ func checkHypothesisConformance(
 // rule for the ones that omit it," so neither does this: a hypothesis
 // without one is still judged and checked, but its result is not
 // persisted, rather than inventing an ID for it here.
+//
+// "Single-counterexample demotion" is applied for real: a
+// NonConformant verdict demotes the hypothesis one stage below
+// whatever its most recent evidence record left it at (via
+// [evidenceledger.Demote]), with the counterexample that caused it
+// recorded alongside. A Conformant or Inconclusive verdict carries the
+// stage forward unchanged - promoting it upward needs the weight-
+// dependent accumulated-case-count machinery
+// ([evidenceledger.Weight.MeetsPromotionThreshold]), which this
+// codebase cannot apply yet: nothing in the .cjtr grammar lets a
+// hypothesis declare its own risk weight, so there is no weight to
+// look the threshold up by. That is a separate, disclosed gap, not
+// something guessed at here.
 func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict conformancecycle.Verdict, counterexample *conformancecycle.Counterexample, image, specVersion string, stdout io.Writer) {
 	if h.ID == "" {
 		_, _ = fmt.Fprintf(stdout, "%s: %s: no declared \"id\", evidence not recorded\n", compositeID, h.Name)
@@ -202,9 +215,20 @@ func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict c
 	// segment, and would fail ComposeID's own per-segment validation.
 	hypothesisID := compositeID + "::" + h.ID
 
+	stage := evidenceledger.Hypothesis
+	if previous, found, err := evidenceledger.Latest(db, hypothesisID); err != nil {
+		_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR reading prior evidence: %v\n", compositeID, h.Name, err)
+		return
+	} else if found {
+		stage = previous.Stage
+	}
+	if verdict == conformancecycle.NonConformant {
+		stage = evidenceledger.Demote(stage)
+	}
+
 	evidence := evidenceledger.Evidence{
 		HypothesisID: hypothesisID,
-		Stage:        evidenceledger.Hypothesis,
+		Stage:        stage,
 		ProducedBy:   "conjecture check " + version.String(),
 		Unchecked:    "bounded proof and complete proof rigor levels not run",
 		ValidityHash: evidenceledger.ValidityHash(specVersion, image, version.String(), "", ""),
