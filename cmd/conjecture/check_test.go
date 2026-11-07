@@ -257,6 +257,47 @@ func TestCheckHypothesisConformance_IsLawNonConformantSetsLawStatusViolated(t *t
 	}
 }
 
+func TestRecordEvidence_IsLawRepeatedViolationsReachContested(t *testing.T) {
+	db := openCheckTestStore(t)
+	h := cjtr.Hypothesis{Name: "repeat offender", ID: "repeat-offender"}
+
+	// lawContestedThreshold is 3: the first two NonConformant calls
+	// should still leave the law merely Violated.
+	for i := 0; i < lawContestedThreshold-1; i++ {
+		recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.NonConformant,
+			&conformancecycle.Counterexample{Value: "x"}, "image", "spec-version", true, &bytes.Buffer{})
+
+		status, err := userdefinedlaws.GetStatus(db, "demo-area::demo::some-rule::repeat-offender")
+		if err != nil {
+			t.Fatalf("call %d: GetStatus returned unexpected error: %v", i, err)
+		}
+		if status != userdefinedlaws.Violated {
+			t.Errorf("call %d: law status = %v, want Violated (below threshold)", i, status)
+		}
+	}
+
+	// The lawContestedThreshold-th NonConformant call crosses the
+	// threshold and should escalate to Contested.
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.NonConformant,
+		&conformancecycle.Counterexample{Value: "x"}, "image", "spec-version", true, &bytes.Buffer{})
+
+	status, err := userdefinedlaws.GetStatus(db, "demo-area::demo::some-rule::repeat-offender")
+	if err != nil {
+		t.Fatalf("GetStatus returned unexpected error: %v", err)
+	}
+	if status != userdefinedlaws.Contested {
+		t.Errorf("law status after %d violations = %v, want Contested", lawContestedThreshold, status)
+	}
+
+	count, err := userdefinedlaws.GetCounterevidenceCount(db, "demo-area::demo::some-rule::repeat-offender")
+	if err != nil {
+		t.Fatalf("GetCounterevidenceCount returned unexpected error: %v", err)
+	}
+	if count != lawContestedThreshold {
+		t.Errorf("GetCounterevidenceCount = %d, want %d", count, lawContestedThreshold)
+	}
+}
+
 func TestCheckHypothesisConformance_NotIsLawNeverSetsLawStatus(t *testing.T) {
 	h, concepts := fixtureHypothesis(t)
 	db := openCheckTestStore(t)

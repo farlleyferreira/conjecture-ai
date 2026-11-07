@@ -17,8 +17,9 @@ import (
 func EnsureSchema(db *sql.DB) error {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS user_defined_law_status (
-			id     TEXT PRIMARY KEY,
-			status INTEGER NOT NULL
+			id                    TEXT PRIMARY KEY,
+			status                INTEGER NOT NULL DEFAULT 0,
+			counterevidence_count INTEGER NOT NULL DEFAULT 0
 		);
 	`)
 	if err != nil {
@@ -58,4 +59,39 @@ func GetStatus(db *sql.DB, id string) (Status, error) {
 		return 0, fmt.Errorf("userdefinedlaws: reading status for %q: %w", id, err)
 	}
 	return Status(status), nil
+}
+
+// RecordCounterevidence increments id's own accumulated empirical-
+// counterevidence count by one and returns the new total - the
+// Invalidation pathway's own running tally toward "a configurable
+// threshold before the law is marked contested" ([MeetsContestedThreshold]).
+// It never touches id's status column: a fresh row it creates defaults
+// to [Unverified], same as [GetStatus] on an id never seen before;
+// [SetStatus] is still the only way a caller changes status itself.
+// The count only ever grows - nothing in the specification's wording
+// ("accumulate toward a... threshold") says a later Conformant result
+// should reset it, so this does not invent that reset.
+func RecordCounterevidence(db *sql.DB, id string) (int, error) {
+	if _, err := db.Exec(
+		`INSERT INTO user_defined_law_status (id, counterevidence_count) VALUES (?, 1)
+		 ON CONFLICT(id) DO UPDATE SET counterevidence_count = counterevidence_count + 1`,
+		id,
+	); err != nil {
+		return 0, fmt.Errorf("userdefinedlaws: recording counterevidence for %q: %w", id, err)
+	}
+	return GetCounterevidenceCount(db, id)
+}
+
+// GetCounterevidenceCount reports id's current accumulated
+// counterevidence count, or 0 if id has never had any recorded.
+func GetCounterevidenceCount(db *sql.DB, id string) (int, error) {
+	var count int
+	err := db.QueryRow(`SELECT counterevidence_count FROM user_defined_law_status WHERE id = ?`, id).Scan(&count)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("userdefinedlaws: reading counterevidence count for %q: %w", id, err)
+	}
+	return count, nil
 }
