@@ -16,6 +16,7 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/sandbox"
 	"github.com/farlleyferreira/conjecture-ai/internal/specjudge"
+	"github.com/farlleyferreira/conjecture-ai/internal/userdefinedlaws"
 	"github.com/farlleyferreira/conjecture-ai/internal/version"
 	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 )
@@ -79,6 +80,10 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
+	if err := userdefinedlaws.EnsureSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
 
 	sb := &sandbox.Sandbox{}
 	ctx := context.Background()
@@ -89,14 +94,18 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	// "specification... version it was produced against" dependency.
 	specVersion := fmt.Sprintf("%x", sha256.Sum256(f.raw))
 
-	runGroup := func(hyps []cjtr.Hypothesis, compositeID string) {
+	// runGroup checks every one of hyps. isLaw is passed through to
+	// [checkHypothesisConformance] so that, and only that, [recordEvidence]
+	// also updates user-defined-laws' own status lifecycle - a plain
+	// hypothesis has no such status to update.
+	runGroup := func(hyps []cjtr.Hypothesis, compositeID string, isLaw bool) {
 		for _, h := range hyps {
-			if failed := checkHypothesisConformance(ctx, db, sb, image, command, h, compositeID, specVersion, f.concepts, f.tables, stdout); failed {
+			if failed := checkHypothesisConformance(ctx, db, sb, image, command, h, compositeID, specVersion, isLaw, f.concepts, f.tables, stdout); failed {
 				exitCode = 1
 			}
 		}
 	}
-	runGroup(f.fileLaws, f.phenomenonID)
+	runGroup(f.fileLaws, f.phenomenonID, true)
 
 	for _, rule := range f.rules {
 		hyps, err := cjtr.Hypotheses(rule.Body, f.concepts)
@@ -111,7 +120,8 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 			exitCode = 1
 			continue
 		}
-		runGroup(append(hyps, laws...), rule.CompositeID)
+		runGroup(hyps, rule.CompositeID, false)
+		runGroup(laws, rule.CompositeID, true)
 	}
 
 	return exitCode
@@ -131,6 +141,7 @@ func checkHypothesisConformance(
 	h cjtr.Hypothesis,
 	compositeID string,
 	specVersion string,
+	isLaw bool,
 	concepts map[string]cjtr.Concept,
 	tables cjtr.Tables,
 	stdout io.Writer,
@@ -200,7 +211,7 @@ func checkHypothesisConformance(
 		_, _ = fmt.Fprintf(stdout, "%s: %s:   counterexample: %v\n", compositeID, h.Name, counterexample.Value)
 	}
 
-	recordEvidence(db, compositeID, h, cvVerdict, counterexample, image, specVersion, stdout)
+	recordEvidence(db, compositeID, h, cvVerdict, counterexample, image, specVersion, isLaw, stdout)
 
 	return cvVerdict == conformancecycle.NonConformant
 }
@@ -211,6 +222,20 @@ func checkHypothesisConformance(
 // rule for the ones that omit it," so neither does this: a hypothesis
 // without one is still judged and checked, but its result is not
 // persisted, rather than inventing an ID for it here.
+//
+// When isLaw is true, this also updates user-defined-laws' own status
+// lifecycle (internal/userdefinedlaws): a Conformant verdict sets the
+// law's status to [userdefinedlaws.Conformant], a NonConformant one to
+// [userdefinedlaws.Violated] - exactly the one transition the
+// specification names a scenario for ("Violation changes status to
+// violated"). An Inconclusive verdict leaves the status unchanged: the
+// specification names no transition for it, so none is invented here.
+// The other statuses ("conformant-under-generalization", "contested",
+// "invalidated") stay unreachable from this path - they need
+// generalization detection, accumulated counterevidence counting, and
+// formal-proof/[userdefinedlaws.ResolveConflict] wiring respectively,
+// none of which this change builds; each is a real, separate gap, not
+// an oversight.
 //
 // "Single-counterexample demotion" is applied for real: a
 // NonConformant verdict demotes the hypothesis one stage below
@@ -224,7 +249,7 @@ func checkHypothesisConformance(
 // hypothesis declare its own risk weight, so there is no weight to
 // look the threshold up by. That is a separate, disclosed gap, not
 // something guessed at here.
-func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict conformancecycle.Verdict, counterexample *conformancecycle.Counterexample, image, specVersion string, stdout io.Writer) {
+func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict conformancecycle.Verdict, counterexample *conformancecycle.Counterexample, image, specVersion string, isLaw bool, stdout io.Writer) {
 	if h.ID == "" {
 		_, _ = fmt.Fprintf(stdout, "%s: %s: no declared \"id\", evidence not recorded\n", compositeID, h.Name)
 		return
@@ -274,6 +299,21 @@ func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict c
 	if _, err := evidenceledger.Append(db, evidence); err != nil {
 		_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR recording evidence: %v\n", compositeID, h.Name, err)
 		return
+	}
+
+	if isLaw {
+		var lawStatus userdefinedlaws.Status
+		switch verdict {
+		case conformancecycle.Conformant:
+			lawStatus = userdefinedlaws.Conformant
+		case conformancecycle.NonConformant:
+			lawStatus = userdefinedlaws.Violated
+		}
+		if verdict == conformancecycle.Conformant || verdict == conformancecycle.NonConformant {
+			if err := userdefinedlaws.SetStatus(db, hypothesisID, lawStatus); err != nil {
+				_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR recording law status: %v\n", compositeID, h.Name, err)
+			}
+		}
 	}
 
 	// work-queue's own "single queue... that drives what conjecture

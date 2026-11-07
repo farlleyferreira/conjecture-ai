@@ -19,6 +19,8 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/omissiondetection"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/sandbox"
+	"github.com/farlleyferreira/conjecture-ai/internal/userdefinedlaws"
+	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 )
 
 const implementUsage = "usage: conjecture implement [--provider <name>] [--max-rounds <N>] <file.cjtr> <rule-id> <hypothesis-id>"
@@ -110,7 +112,7 @@ func runImplement(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	rule, h, err := findHypothesis(f, ruleID, hypothesisID)
+	rule, h, isLaw, err := findHypothesis(f, ruleID, hypothesisID)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
@@ -137,10 +139,25 @@ func runImplement(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
+	// workqueue/userdefinedlaws schemas are required here for the same
+	// reason "conjecture check" ensures them: recordEvidence (shared
+	// with check.go) enqueues a blocker item on NonConformant and, when
+	// isLaw, updates a law's status - both need their own table to
+	// already exist, which this path never ensured before this change
+	// (a pre-existing gap: the enqueue in #89 only wired "check", not
+	// "implement", so it silently no-op'd here until now).
+	if err := workqueue.EnsureSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	if err := userdefinedlaws.EnsureSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
 
 	sb := &sandbox.Sandbox{}
 	specVersion := fmt.Sprintf("%x", sha256.Sum256(f.raw))
-	verdict, err := runImplementLoop(context.Background(), db, sb, client, rule, h, maxRounds, specVersion, f.concepts, f.tables, stdout)
+	verdict, err := runImplementLoop(context.Background(), db, sb, client, rule, h, maxRounds, specVersion, isLaw, f.concepts, f.tables, stdout)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
@@ -177,6 +194,7 @@ func runImplementLoop(
 	h cjtr.Hypothesis,
 	maxRounds int,
 	specVersion string,
+	isLaw bool,
 	concepts map[string]cjtr.Concept,
 	tables cjtr.Tables,
 	stdout io.Writer,
@@ -256,7 +274,7 @@ func runImplementLoop(
 		verdict = conformancecycle.VerdictOnBudgetExhausted
 	}
 
-	recordEvidence(db, rule.CompositeID, h, verdict, previousCounterexample, implementImage, specVersion, stdout)
+	recordEvidence(db, rule.CompositeID, h, verdict, previousCounterexample, implementImage, specVersion, isLaw, stdout)
 	return verdict, nil
 }
 
@@ -317,26 +335,33 @@ func sortedConceptNames(concepts map[string]cjtr.Concept) []string {
 
 // findHypothesis locates the hypothesis (or user-defined law) declared
 // ruleID/hypothesisID names, returning the rule it belongs to (for
-// recordEvidence's own compositeID::id scoping).
-func findHypothesis(f loadedFicha, ruleID, hypothesisID string) (cjtr.Rule, cjtr.Hypothesis, error) {
+// recordEvidence's own compositeID::id scoping) and whether it was
+// declared as a law rather than a plain hypothesis (so the caller can
+// thread that through to recordEvidence's own isLaw parameter).
+func findHypothesis(f loadedFicha, ruleID, hypothesisID string) (cjtr.Rule, cjtr.Hypothesis, bool, error) {
 	for _, rule := range f.rules {
 		if rule.ID != ruleID {
 			continue
 		}
 		hyps, err := cjtr.Hypotheses(rule.Body, f.concepts)
 		if err != nil {
-			return cjtr.Rule{}, cjtr.Hypothesis{}, err
+			return cjtr.Rule{}, cjtr.Hypothesis{}, false, err
 		}
 		laws, err := cjtr.UserDefinedLaws(rule.Body, f.concepts)
 		if err != nil {
-			return cjtr.Rule{}, cjtr.Hypothesis{}, err
+			return cjtr.Rule{}, cjtr.Hypothesis{}, false, err
 		}
-		for _, h := range append(hyps, laws...) {
+		for _, h := range hyps {
 			if h.ID == hypothesisID {
-				return rule, h, nil
+				return rule, h, false, nil
 			}
 		}
-		return cjtr.Rule{}, cjtr.Hypothesis{}, fmt.Errorf("rule %q has no hypothesis with id %q", ruleID, hypothesisID)
+		for _, h := range laws {
+			if h.ID == hypothesisID {
+				return rule, h, true, nil
+			}
+		}
+		return cjtr.Rule{}, cjtr.Hypothesis{}, false, fmt.Errorf("rule %q has no hypothesis with id %q", ruleID, hypothesisID)
 	}
-	return cjtr.Rule{}, cjtr.Hypothesis{}, fmt.Errorf("no rule with id %q", ruleID)
+	return cjtr.Rule{}, cjtr.Hypothesis{}, false, fmt.Errorf("no rule with id %q", ruleID)
 }
