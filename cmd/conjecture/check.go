@@ -127,6 +127,42 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	return exitCode
 }
 
+// judgeFalsifiability applies specjudge's own falsifiability check to
+// h, printing the same "judge: <verdict>" line (and, if rejected, each
+// finding) that checkHypothesisConformance always has - shared with
+// runResults (results.go), which judges a hypothesis the same way
+// before trusting an externally-reported result for it, rather than
+// recording evidence for one the judge would have rejected outright.
+//
+// ok is false only when checking falsifiability itself errored (and
+// that error has already been printed to stdout) - the caller should
+// treat that the same as a rejecting verdict.
+func judgeFalsifiability(compositeID string, h cjtr.Hypothesis, concepts map[string]cjtr.Concept, stdout io.Writer) (verdict specjudge.Verdict, ok bool) {
+	var findings []specjudge.Finding
+	for _, stmt := range unfalsifiabilityCandidates(h) {
+		falsifiable, err := cjtr.Falsifiable(stmt, concepts)
+		if err != nil {
+			_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR checking falsifiability: %v\n", compositeID, h.Name, err)
+			return 0, false
+		}
+		if !falsifiable {
+			findings = append(findings, specjudge.Finding{
+				Severity: specjudge.Rejecting,
+				Message:  fmt.Sprintf("unfalsifiable: %q holds for every value %q's own declared domain allows", formatStatement(stmt), stmt.Term),
+			})
+		}
+	}
+
+	verdict = specjudge.Judge(findings)
+	_, _ = fmt.Fprintf(stdout, "%s: %s: judge: %s\n", compositeID, h.Name, verdict)
+	if verdict != specjudge.Accepted {
+		for _, finding := range findings {
+			_, _ = fmt.Fprintf(stdout, "%s: %s:   - %s\n", compositeID, h.Name, finding.Message)
+		}
+	}
+	return verdict, true
+}
+
 // checkHypothesisConformance judges and, if accepted, conformance-
 // checks h, returning whether this hypothesis's result should fail
 // runCheck's own exit code (a rejecting judge verdict or a
@@ -146,27 +182,11 @@ func checkHypothesisConformance(
 	tables cjtr.Tables,
 	stdout io.Writer,
 ) bool {
-	var findings []specjudge.Finding
-	for _, stmt := range unfalsifiabilityCandidates(h) {
-		ok, err := cjtr.Falsifiable(stmt, concepts)
-		if err != nil {
-			_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR checking falsifiability: %v\n", compositeID, h.Name, err)
-			return true
-		}
-		if !ok {
-			findings = append(findings, specjudge.Finding{
-				Severity: specjudge.Rejecting,
-				Message:  fmt.Sprintf("unfalsifiable: %q holds for every value %q's own declared domain allows", formatStatement(stmt), stmt.Term),
-			})
-		}
+	verdict, ok := judgeFalsifiability(compositeID, h, concepts, stdout)
+	if !ok {
+		return true
 	}
-
-	verdict := specjudge.Judge(findings)
-	_, _ = fmt.Fprintf(stdout, "%s: %s: judge: %s\n", compositeID, h.Name, verdict)
 	if verdict != specjudge.Accepted {
-		for _, finding := range findings {
-			_, _ = fmt.Fprintf(stdout, "%s: %s:   - %s\n", compositeID, h.Name, finding.Message)
-		}
 		return true
 	}
 
