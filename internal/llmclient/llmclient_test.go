@@ -31,3 +31,26 @@ func TestNew_AnthropicIsCaseInsensitiveAndReadsTheKey(t *testing.T) {
 		t.Errorf("AnthropicClient.APIKey = %q, want the env var's value", anthropic.APIKey)
 	}
 }
+
+func TestNew_DeepSeekWithNoKeySetIsError(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	_, err := New("deepseek")
+	if err == nil {
+		t.Fatal("New(\"deepseek\") with no API key = nil error, want one")
+	}
+}
+
+func TestNew_DeepSeekIsCaseInsensitiveAndReadsTheKey(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "test-key-456")
+	client, err := New("DeepSeek")
+	if err != nil {
+		t.Fatalf("New(\"DeepSeek\") returned unexpected error: %v", err)
+	}
+	deepseek, ok := client.(*DeepSeekClient)
+	if !ok {
+		t.Fatalf("New(\"DeepSeek\") returned %T, want *DeepSeekClient", client)
+	}
+	if deepseek.APIKey != "test-key-456" {
+		t.Errorf("DeepSeekClient.APIKey = %q, want the env var's value", deepseek.APIKey)
+	}
+}
