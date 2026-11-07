@@ -40,6 +40,8 @@ func New(provider string) (Client, error) {
 	switch strings.ToLower(provider) {
 	case "anthropic":
 		return newAnthropicClient()
+	case "deepseek":
+		return newDeepSeekClient()
 	default:
 		return nil, fmt.Errorf("llmclient: unrecognized provider %q", provider)
 	}
