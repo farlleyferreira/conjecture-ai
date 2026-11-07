@@ -274,7 +274,7 @@ func runImplementLoop(
 		verdict = conformancecycle.VerdictOnBudgetExhausted
 	}
 
-	recordEvidence(db, rule.CompositeID, h, verdict, previousCounterexample, implementImage, specVersion, isLaw, stdout)
+	recordEvidence(db, rule.CompositeID, h, verdict, previousCounterexample, implementImage, specVersion, len(cases), isLaw, stdout)
 	return verdict, nil
 }
 

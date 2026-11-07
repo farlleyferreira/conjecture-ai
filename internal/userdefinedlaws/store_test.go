@@ -114,6 +114,76 @@ func TestSetStatus_DoesNotResetCounterevidenceCount(t *testing.T) {
 	}
 }
 
+func TestGetFailureFreeCases_NeverRecordedIsZero(t *testing.T) {
+	db := openTestStore(t)
+	count, err := GetFailureFreeCases(db, "demo::some-law")
+	if err != nil {
+		t.Fatalf("GetFailureFreeCases returned unexpected error: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("GetFailureFreeCases on an unrecorded law = %d, want 0", count)
+	}
+}
+
+func TestAddFailureFreeCases_AccumulatesAcrossCalls(t *testing.T) {
+	db := openTestStore(t)
+	for i, want := range []int{3, 7, 8} {
+		got, err := AddFailureFreeCases(db, "demo::some-law", []int{3, 4, 1}[i])
+		if err != nil {
+			t.Fatalf("AddFailureFreeCases call %d returned unexpected error: %v", i, err)
+		}
+		if got != want {
+			t.Errorf("AddFailureFreeCases call %d = %d, want %d", i, got, want)
+		}
+	}
+}
+
+func TestResetFailureFreeCases_ClearsAccumulatedCount(t *testing.T) {
+	db := openTestStore(t)
+	if _, err := AddFailureFreeCases(db, "demo::some-law", 50); err != nil {
+		t.Fatalf("AddFailureFreeCases returned unexpected error: %v", err)
+	}
+	if err := ResetFailureFreeCases(db, "demo::some-law"); err != nil {
+		t.Fatalf("ResetFailureFreeCases returned unexpected error: %v", err)
+	}
+
+	count, err := GetFailureFreeCases(db, "demo::some-law")
+	if err != nil {
+		t.Fatalf("GetFailureFreeCases returned unexpected error: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("GetFailureFreeCases after reset = %d, want 0", count)
+	}
+}
+
+func TestResetFailureFreeCases_DoesNotResetStatusOrCounterevidence(t *testing.T) {
+	db := openTestStore(t)
+	if err := SetStatus(db, "demo::some-law", Contested); err != nil {
+		t.Fatalf("SetStatus returned unexpected error: %v", err)
+	}
+	if _, err := RecordCounterevidence(db, "demo::some-law"); err != nil {
+		t.Fatalf("RecordCounterevidence returned unexpected error: %v", err)
+	}
+	if err := ResetFailureFreeCases(db, "demo::some-law"); err != nil {
+		t.Fatalf("ResetFailureFreeCases returned unexpected error: %v", err)
+	}
+
+	status, err := GetStatus(db, "demo::some-law")
+	if err != nil {
+		t.Fatalf("GetStatus returned unexpected error: %v", err)
+	}
+	if status != Contested {
+		t.Errorf("GetStatus after ResetFailureFreeCases = %v, want Contested (unchanged)", status)
+	}
+	count, err := GetCounterevidenceCount(db, "demo::some-law")
+	if err != nil {
+		t.Fatalf("GetCounterevidenceCount returned unexpected error: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("GetCounterevidenceCount after ResetFailureFreeCases = %d, want 1 (unchanged)", count)
+	}
+}
+
 func TestSetStatus_OverwritesPriorStatus(t *testing.T) {
 	db := openTestStore(t)
 	if err := SetStatus(db, "demo::some-law", Violated); err != nil {

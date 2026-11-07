@@ -257,6 +257,79 @@ func TestCheckHypothesisConformance_IsLawNonConformantSetsLawStatusViolated(t *t
 	}
 }
 
+func TestRecordEvidence_IsLawPromotesToThesisAtCriticalThreshold(t *testing.T) {
+	db := openCheckTestStore(t)
+	h := cjtr.Hypothesis{Name: "steady law", ID: "steady-law"}
+	hypothesisID := "demo-area::demo::some-rule::steady-law"
+	criticalRequiredCases := evidenceledger.Critical.RequiredCases()
+
+	// Below threshold: still Conformant status, still at Hypothesis
+	// stage - no promotion yet.
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", criticalRequiredCases-1, true, &bytes.Buffer{})
+
+	latest, found, err := evidenceledger.Latest(db, hypothesisID)
+	if err != nil {
+		t.Fatalf("Latest returned unexpected error: %v", err)
+	}
+	if !found || latest.Stage != evidenceledger.Hypothesis {
+		t.Errorf("after %d failure-free cases, latest = %+v, want Stage Hypothesis (not yet promoted)", criticalRequiredCases-1, latest)
+	}
+
+	// One more failure-free case crosses the threshold and should
+	// promote the law to Thesis.
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", 1, true, &bytes.Buffer{})
+
+	latest, found, err = evidenceledger.Latest(db, hypothesisID)
+	if err != nil {
+		t.Fatalf("Latest returned unexpected error: %v", err)
+	}
+	if !found || latest.Stage != evidenceledger.Thesis {
+		t.Errorf("after crossing the threshold, latest = %+v, want Stage Thesis", latest)
+	}
+
+	count, err := userdefinedlaws.GetFailureFreeCases(db, hypothesisID)
+	if err != nil {
+		t.Fatalf("GetFailureFreeCases returned unexpected error: %v", err)
+	}
+	if count != criticalRequiredCases {
+		t.Errorf("GetFailureFreeCases = %d, want %d", count, criticalRequiredCases)
+	}
+}
+
+func TestRecordEvidence_IsLawNonConformantResetsFailureFreeCases(t *testing.T) {
+	db := openCheckTestStore(t)
+	h := cjtr.Hypothesis{Name: "reset law", ID: "reset-law"}
+	hypothesisID := "demo-area::demo::some-rule::reset-law"
+
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", 500, true, &bytes.Buffer{})
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.NonConformant,
+		&conformancecycle.Counterexample{Value: "x"}, "image", "spec-version", 0, true, &bytes.Buffer{})
+
+	count, err := userdefinedlaws.GetFailureFreeCases(db, hypothesisID)
+	if err != nil {
+		t.Fatalf("GetFailureFreeCases returned unexpected error: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("GetFailureFreeCases after a NonConformant verdict = %d, want 0 (reset)", count)
+	}
+}
+
+func TestRecordEvidence_NotIsLawNeverPromotes(t *testing.T) {
+	db := openCheckTestStore(t)
+	h := cjtr.Hypothesis{Name: "plain hypothesis", ID: "plain-hypothesis"}
+	hypothesisID := "demo-area::demo::some-rule::plain-hypothesis"
+
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", evidenceledger.Critical.RequiredCases(), false, &bytes.Buffer{})
+
+	latest, found, err := evidenceledger.Latest(db, hypothesisID)
+	if err != nil {
+		t.Fatalf("Latest returned unexpected error: %v", err)
+	}
+	if !found || latest.Stage != evidenceledger.Hypothesis {
+		t.Errorf("latest = %+v, want Stage Hypothesis (a plain hypothesis never promotes through this path)", latest)
+	}
+}
+
 func TestRecordEvidence_IsLawRepeatedViolationsReachContested(t *testing.T) {
 	db := openCheckTestStore(t)
 	h := cjtr.Hypothesis{Name: "repeat offender", ID: "repeat-offender"}
@@ -265,7 +338,7 @@ func TestRecordEvidence_IsLawRepeatedViolationsReachContested(t *testing.T) {
 	// should still leave the law merely Violated.
 	for i := 0; i < lawContestedThreshold-1; i++ {
 		recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.NonConformant,
-			&conformancecycle.Counterexample{Value: "x"}, "image", "spec-version", true, &bytes.Buffer{})
+			&conformancecycle.Counterexample{Value: "x"}, "image", "spec-version", 0, true, &bytes.Buffer{})
 
 		status, err := userdefinedlaws.GetStatus(db, "demo-area::demo::some-rule::repeat-offender")
 		if err != nil {
@@ -279,7 +352,7 @@ func TestRecordEvidence_IsLawRepeatedViolationsReachContested(t *testing.T) {
 	// The lawContestedThreshold-th NonConformant call crosses the
 	// threshold and should escalate to Contested.
 	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.NonConformant,
-		&conformancecycle.Counterexample{Value: "x"}, "image", "spec-version", true, &bytes.Buffer{})
+		&conformancecycle.Counterexample{Value: "x"}, "image", "spec-version", 0, true, &bytes.Buffer{})
 
 	status, err := userdefinedlaws.GetStatus(db, "demo-area::demo::some-rule::repeat-offender")
 	if err != nil {
@@ -421,7 +494,7 @@ func TestRecordEvidence_NoDeclaredIDIsNotRecorded(t *testing.T) {
 	db := openCheckTestStore(t)
 	h := cjtr.Hypothesis{Name: "anonymous"} // ID left empty
 
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", false, &bytes.Buffer{})
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", 0, false, &bytes.Buffer{})
 
 	history, err := evidenceledger.History(db, "demo-area::demo::some-rule::anonymous")
 	if err != nil {
@@ -436,7 +509,7 @@ func TestRecordEvidence_InconclusiveIsRecordedAsOpen(t *testing.T) {
 	db := openCheckTestStore(t)
 	h := cjtr.Hypothesis{Name: "timed out", ID: "timed-out"}
 
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Inconclusive, nil, "image", "spec-version", false, &bytes.Buffer{})
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Inconclusive, nil, "image", "spec-version", 0, false, &bytes.Buffer{})
 
 	history, err := evidenceledger.History(db, "demo-area::demo::some-rule::timed-out")
 	if err != nil {
@@ -464,7 +537,7 @@ func TestRecordEvidence_NonConformantDemotesFromPriorStage(t *testing.T) {
 	}
 
 	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.NonConformant,
-		&conformancecycle.Counterexample{Value: "x = -1"}, "image", "spec-version", false, &bytes.Buffer{})
+		&conformancecycle.Counterexample{Value: "x = -1"}, "image", "spec-version", 0, false, &bytes.Buffer{})
 
 	history, err := evidenceledger.History(db, hypothesisID)
 	if err != nil {
@@ -489,7 +562,7 @@ func TestRecordEvidence_ConformantCarriesPriorStageForward(t *testing.T) {
 		t.Fatalf("Append returned unexpected error: %v", err)
 	}
 
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", false, &bytes.Buffer{})
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", 0, false, &bytes.Buffer{})
 
 	history, err := evidenceledger.History(db, hypothesisID)
 	if err != nil {
