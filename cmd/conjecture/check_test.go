@@ -1,0 +1,282 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
+	"github.com/farlleyferreira/conjecture-ai/internal/conformancecycle"
+	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
+	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
+	"github.com/farlleyferreira/conjecture-ai/internal/sandbox"
+)
+
+// fakeImplPath is a fresh build of internal/conformancecycle's own
+// testdata/fakeimpl fixture, shared by every test in this file - the
+// same real "docker + implementation" stand-in that package's own
+// tests use, reused here instead of maintaining an independent copy
+// of it.
+var fakeImplPath string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "checktest-fakeimpl")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	fakeImplPath = filepath.Join(dir, "fakeimpl")
+	if runtime.GOOS == "windows" {
+		fakeImplPath += ".exe"
+	}
+
+	goBin := "go"
+	if runtime.GOOS == "windows" {
+		goBin = "go.exe"
+	}
+	goBin = filepath.Join(runtime.GOROOT(), "bin", goBin)
+
+	buildCmd := exec.Command(goBin, "build", "-o", fakeImplPath, "../../internal/conformancecycle/testdata/fakeimpl")
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "building fakeimpl: %v\n%s", err, out)
+		os.Exit(1)
+	}
+
+	os.Exit(m.Run())
+}
+
+// checkFixture is a minimal, self-contained .cjtr document for this
+// file's own tests: one hypothesis with a declared "id", one input
+// concept with a closed domain (so DirectedSamplingInputs has
+// something to vary), and one worked example to use as its baseline.
+const checkFixture = `
+conjecture: 1.0.0
+
+phenomenon: demo
+
+concepts:
+  order type:
+    variable: input.order_type
+    one_of: [regular, subscription]
+  shipping fee:
+    variable: output.shipping_fee
+    type: decimal
+
+rules:
+  shipping fee rule:
+    id: shipping-rule
+    hypotheses:
+      fee matches:
+        id: fee-matches
+        always: the shipping fee is 7.50
+        examples:
+          - {order type: regular, shipping fee: 7.50}
+`
+
+func writeCheckFixture(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "phenomena", "demo-area")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	path := filepath.Join(dir, "demo.cjtr")
+	if err := os.WriteFile(path, []byte(checkFixture), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	return path
+}
+
+func openCheckTestStore(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := persistence.OpenStoreAt(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatalf("OpenStoreAt returned unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := evidenceledger.EnsureSchema(db); err != nil {
+		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
+	}
+	return db
+}
+
+func TestRunCheck_TooFewArguments(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runCheck([]string{"file.cjtr"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("runCheck with too few arguments = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), checkUsage) {
+		t.Errorf("stderr = %q, want it to contain the usage string", stderr.String())
+	}
+}
+
+func fixtureHypothesis(t *testing.T) (cjtr.Hypothesis, map[string]cjtr.Concept) {
+	t.Helper()
+	path := writeCheckFixture(t)
+	f, err := loadFicha(path)
+	if err != nil {
+		t.Fatalf("loadFicha returned unexpected error: %v", err)
+	}
+	if len(f.rules) != 1 {
+		t.Fatalf("len(f.rules) = %d, want 1", len(f.rules))
+	}
+	hyps, err := cjtr.Hypotheses(f.rules[0].Body, f.concepts)
+	if err != nil {
+		t.Fatalf("cjtr.Hypotheses returned unexpected error: %v", err)
+	}
+	if len(hyps) != 1 {
+		t.Fatalf("len(hyps) = %d, want 1", len(hyps))
+	}
+	return hyps[0], f.concepts
+}
+
+func TestCheckHypothesisConformance_AcceptedAndConformantRecordsEvidence(t *testing.T) {
+	h, concepts := fixtureHypothesis(t)
+	db := openCheckTestStore(t)
+	sb := &sandbox.Sandbox{DockerBinary: fakeImplPath}
+
+	failed := checkHypothesisConformance(
+		context.Background(), db, sb, "unused", []string{"WRITE", `{"output.shipping_fee":"7.50"}`},
+		h, "demo-area::demo::shipping-rule", "test-spec-version", concepts, nil, &bytes.Buffer{},
+	)
+	if failed {
+		t.Error("checkHypothesisConformance = true (failed), want false (conformant)")
+	}
+
+	history, err := evidenceledger.History(db, "demo-area::demo::shipping-rule::fee-matches")
+	if err != nil {
+		t.Fatalf("History returned unexpected error: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("len(history) = %d, want 1", len(history))
+	}
+	if history[0].Survived == "" {
+		t.Error("recorded evidence has empty Survived, want a description of the passing run")
+	}
+}
+
+func TestCheckHypothesisConformance_NonConformantFailsAndRecordsCounterexample(t *testing.T) {
+	h, concepts := fixtureHypothesis(t)
+	db := openCheckTestStore(t)
+	sb := &sandbox.Sandbox{DockerBinary: fakeImplPath}
+
+	// Every generated case will see this mismatching output, so the
+	// hypothesis is non-conformant for all of them.
+	failed := checkHypothesisConformance(
+		context.Background(), db, sb, "unused", []string{"WRITE", `{"output.shipping_fee":"99.00"}`},
+		h, "demo-area::demo::shipping-rule", "test-spec-version", concepts, nil, &bytes.Buffer{},
+	)
+	if !failed {
+		t.Error("checkHypothesisConformance = false, want true (non-conformant)")
+	}
+
+	history, err := evidenceledger.History(db, "demo-area::demo::shipping-rule::fee-matches")
+	if err != nil {
+		t.Fatalf("History returned unexpected error: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("len(history) = %d, want 1", len(history))
+	}
+	if !strings.Contains(history[0].Attacked, "counterexample") {
+		t.Errorf("recorded evidence.Attacked = %q, want it to mention the counterexample", history[0].Attacked)
+	}
+}
+
+func TestCheckHypothesisConformance_UnfalsifiableIsRejectedWithoutRunningConformance(t *testing.T) {
+	concepts := map[string]cjtr.Concept{
+		"order type": {Name: "order type", Kind: cjtr.VariableConcept, Variable: "input.order_type", OneOf: []string{"regular"}},
+	}
+	then, err := cjtr.ParseComparison("the order type is regular", concepts)
+	if err != nil {
+		t.Fatalf("ParseComparison returned unexpected error: %v", err)
+	}
+	h := cjtr.Hypothesis{
+		Name: "unfalsifiable demo", ID: "unfalsifiable-demo", IsUniversal: true, Then: then,
+		Examples: []map[string]string{{"order type": "regular"}},
+	}
+	db := openCheckTestStore(t)
+	sb := &sandbox.Sandbox{DockerBinary: fakeImplPath}
+
+	var stdout bytes.Buffer
+	failed := checkHypothesisConformance(
+		context.Background(), db, sb, "unused", []string{"WRITE", `{}`},
+		h, "demo-area::demo::some-rule", "test-spec-version", concepts, nil, &stdout,
+	)
+	if !failed {
+		t.Error("checkHypothesisConformance for an unfalsifiable hypothesis = false, want true (rejected)")
+	}
+	if !strings.Contains(stdout.String(), "unfalsifiable") {
+		t.Errorf("stdout = %q, want it to report the hypothesis as unfalsifiable", stdout.String())
+	}
+
+	history, err := evidenceledger.History(db, "demo-area::demo::some-rule::unfalsifiable-demo")
+	if err != nil {
+		t.Fatalf("History returned unexpected error: %v", err)
+	}
+	if len(history) != 0 {
+		t.Errorf("len(history) = %d, want 0 (a rejected hypothesis is never conformance-checked or recorded)", len(history))
+	}
+}
+
+func TestCheckHypothesisConformance_NoExamplesSkipsConformanceWithoutFailing(t *testing.T) {
+	concepts := map[string]cjtr.Concept{
+		"shipping fee": {Name: "shipping fee", Kind: cjtr.VariableConcept, Variable: "output.shipping_fee", Type: "decimal"},
+	}
+	then, err := cjtr.ParseComparison("the shipping fee is at least 0.00", concepts)
+	if err != nil {
+		t.Fatalf("ParseComparison returned unexpected error: %v", err)
+	}
+	h := cjtr.Hypothesis{Name: "no examples", ID: "no-examples", IsUniversal: true, Then: then}
+	db := openCheckTestStore(t)
+	sb := &sandbox.Sandbox{DockerBinary: fakeImplPath}
+
+	failed := checkHypothesisConformance(
+		context.Background(), db, sb, "unused", []string{"WRITE", `{}`},
+		h, "demo-area::demo::some-rule", "test-spec-version", concepts, nil, &bytes.Buffer{},
+	)
+	if failed {
+		t.Error("checkHypothesisConformance with no examples = true, want false (nothing to fail on)")
+	}
+}
+
+func TestRecordEvidence_NoDeclaredIDIsNotRecorded(t *testing.T) {
+	db := openCheckTestStore(t)
+	h := cjtr.Hypothesis{Name: "anonymous"} // ID left empty
+
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", &bytes.Buffer{})
+
+	history, err := evidenceledger.History(db, "demo-area::demo::some-rule::anonymous")
+	if err != nil {
+		t.Fatalf("History returned unexpected error: %v", err)
+	}
+	if len(history) != 0 {
+		t.Errorf("len(history) = %d, want 0 (no id, nothing to record)", len(history))
+	}
+}
+
+func TestRecordEvidence_InconclusiveIsRecordedAsOpen(t *testing.T) {
+	db := openCheckTestStore(t)
+	h := cjtr.Hypothesis{Name: "timed out", ID: "timed-out"}
+
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Inconclusive, nil, "image", "spec-version", &bytes.Buffer{})
+
+	history, err := evidenceledger.History(db, "demo-area::demo::some-rule::timed-out")
+	if err != nil {
+		t.Fatalf("History returned unexpected error: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("len(history) = %d, want 1", len(history))
+	}
+	if history[0].Open == "" {
+		t.Error("recorded evidence has empty Open, want a note that the result was inconclusive")
+	}
+}
