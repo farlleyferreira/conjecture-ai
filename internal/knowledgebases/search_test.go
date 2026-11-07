@@ -127,3 +127,63 @@ func TestSearch_NoMatchesReturnsEmpty(t *testing.T) {
 		t.Errorf("len(results) = %d, want 0", len(results))
 	}
 }
+
+func TestSearchInScope_ExcludesBaseFromADifferentArea(t *testing.T) {
+	db := openSearchTestStore(t)
+
+	shippingPath := filepath.Join(t.TempDir(), "shipping.txt")
+	if err := os.WriteFile(shippingPath, []byte("a norma de frete fala sobre o limite de peso"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	shippingBase, err := Add(db, Base{Path: shippingPath, Authority: Reference, Scope: "area:shipping"})
+	if err != nil {
+		t.Fatalf("Add returned unexpected error: %v", err)
+	}
+	if err := IndexBase(db, shippingBase); err != nil {
+		t.Fatalf("IndexBase returned unexpected error: %v", err)
+	}
+
+	billingPath := filepath.Join(t.TempDir(), "billing.txt")
+	if err := os.WriteFile(billingPath, []byte("a norma de cobranca tambem fala sobre o limite de peso"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	billingBase, err := Add(db, Base{Path: billingPath, Authority: Reference, Scope: "area:billing"})
+	if err != nil {
+		t.Fatalf("Add returned unexpected error: %v", err)
+	}
+	if err := IndexBase(db, billingBase); err != nil {
+		t.Fatalf("IndexBase returned unexpected error: %v", err)
+	}
+
+	results, err := SearchInScope(db, "limite de peso", "shipping")
+	if err != nil {
+		t.Fatalf("SearchInScope returned unexpected error: %v", err)
+	}
+	if len(results) != 1 || results[0].BaseID != shippingBase.ID {
+		t.Errorf("SearchInScope(..., \"shipping\") = %+v, want only the shipping-scoped base", results)
+	}
+}
+
+func TestSearchInScope_ProjectScopedBaseAppliesToEveryArea(t *testing.T) {
+	db := openSearchTestStore(t)
+
+	path := filepath.Join(t.TempDir(), "glossary.txt")
+	if err := os.WriteFile(path, []byte("definicao geral de assinatura"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	b, err := Add(db, Base{Path: path, Authority: Definition, Scope: "project"})
+	if err != nil {
+		t.Fatalf("Add returned unexpected error: %v", err)
+	}
+	if err := IndexBase(db, b); err != nil {
+		t.Fatalf("IndexBase returned unexpected error: %v", err)
+	}
+
+	results, err := SearchInScope(db, "assinatura", "any-area-at-all")
+	if err != nil {
+		t.Fatalf("SearchInScope returned unexpected error: %v", err)
+	}
+	if len(results) != 1 || results[0].BaseID != b.ID {
+		t.Errorf("SearchInScope for a project-scoped base = %+v, want it included regardless of area", results)
+	}
+}

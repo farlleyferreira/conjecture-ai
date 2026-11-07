@@ -131,3 +131,33 @@ func Search(db *sql.DB, query string) ([]SearchResult, error) {
 	}
 	return results, nil
 }
+
+// SearchInScope is [Search], filtered to only bases [InScope] for
+// area - "Scoped application": "the system does not apply that base's
+// content when judging or verifying a different area." Search itself
+// stays scope-agnostic (a human asking what any attached base says
+// about a query is a real, different use this package still serves),
+// so this is a second entry point, not a behavior change to Search.
+func SearchInScope(db *sql.DB, query, area string) ([]SearchResult, error) {
+	results, err := Search(db, query)
+	if err != nil {
+		return nil, err
+	}
+
+	bases, err := List(db)
+	if err != nil {
+		return nil, err
+	}
+	inScope := make(map[int64]bool, len(bases))
+	for _, b := range bases {
+		inScope[b.ID] = InScope(b, area)
+	}
+
+	var filtered []SearchResult
+	for _, r := range results {
+		if inScope[r.BaseID] {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered, nil
+}

@@ -10,7 +10,7 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 )
 
-const baseUsage = "usage: conjecture base add <path> --authority <norm|definition|reference|history> --scope <project|area:NAME> [--review-date <date>]\n       conjecture base search <query>"
+const baseUsage = "usage: conjecture base add <path> --authority <norm|definition|reference|history> --scope <project|area:NAME> [--review-date <date>]\n       conjecture base search <query> [--area <name>]"
 
 // runBase implements "conjecture base <subcommand>": "add"
 // (knowledge-bases spec, "CLI-based base attachment") and "search"
@@ -121,14 +121,34 @@ func runBaseAdd(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// runBaseSearch implements "conjecture base search <query>" -
-// knowledge-bases' "Local indexing for retrieval" textual-search half,
-// over whatever every "conjecture base add" has indexed so far.
+// runBaseSearch implements "conjecture base search <query> [--area
+// <name>]" - knowledge-bases' "Local indexing for retrieval" textual-
+// search half, over whatever every "conjecture base add" has indexed
+// so far. --area restricts results to bases "Scoped application"
+// treats as applying to that area (project-scoped, or scoped to that
+// exact area - see [knowledgebases.InScope]); omitting it searches
+// every indexed base regardless of scope, the same unscoped behavior
+// this command has always had.
 func runBaseSearch(args []string, stdout, stderr io.Writer) int {
-	if len(args) != 1 {
+	var query, area string
+	var positional []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--area" {
+			i++
+			if i >= len(args) {
+				_, _ = fmt.Fprintln(stderr, baseUsage)
+				return 1
+			}
+			area = args[i]
+			continue
+		}
+		positional = append(positional, args[i])
+	}
+	if len(positional) != 1 {
 		_, _ = fmt.Fprintln(stderr, baseUsage)
 		return 1
 	}
+	query = positional[0]
 
 	db, err := openRepoStore()
 	if err != nil {
@@ -137,19 +157,32 @@ func runBaseSearch(args []string, stdout, stderr io.Writer) int {
 	}
 	defer func() { _ = db.Close() }()
 
-	return searchBases(db, args[0], stdout, stderr)
+	return searchBases(db, query, area, stdout, stderr)
 }
 
 // searchBases is "conjecture base search"'s store-independent half, so
 // a test can exercise it against a temporary store instead of the
-// real per-OS one [persistence.OpenStore] always resolves to.
-func searchBases(db *sql.DB, query string, stdout, stderr io.Writer) int {
+// real per-OS one [persistence.OpenStore] always resolves to. An empty
+// area searches unscoped ([knowledgebases.Search]); a non-empty one
+// restricts results to bases in scope for it
+// ([knowledgebases.SearchInScope]).
+func searchBases(db *sql.DB, query, area string, stdout, stderr io.Writer) int {
 	if err := knowledgebases.EnsureSearchSchema(db); err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
 
-	results, err := knowledgebases.Search(db, query)
+	var results []knowledgebases.SearchResult
+	var err error
+	if area == "" {
+		results, err = knowledgebases.Search(db, query)
+	} else {
+		if err := knowledgebases.EnsureSchema(db); err != nil {
+			_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+			return 1
+		}
+		results, err = knowledgebases.SearchInScope(db, query, area)
+	}
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
