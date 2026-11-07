@@ -17,6 +17,7 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/sandbox"
+	"github.com/farlleyferreira/conjecture-ai/internal/userdefinedlaws"
 	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 )
 
@@ -121,6 +122,9 @@ func openCheckTestStore(t *testing.T) *sql.DB {
 	if err := workqueue.EnsureSchema(db); err != nil {
 		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
 	}
+	if err := userdefinedlaws.EnsureSchema(db); err != nil {
+		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
+	}
 	return db
 }
 
@@ -162,7 +166,7 @@ func TestCheckHypothesisConformance_AcceptedAndConformantRecordsEvidence(t *test
 
 	failed := checkHypothesisConformance(
 		context.Background(), db, sb, "unused", []string{"WRITE", `{"output.shipping_fee":"7.50"}`},
-		h, "demo-area::demo::shipping-rule", "test-spec-version", concepts, nil, &bytes.Buffer{},
+		h, "demo-area::demo::shipping-rule", "test-spec-version", false, concepts, nil, &bytes.Buffer{},
 	)
 	if failed {
 		t.Error("checkHypothesisConformance = true (failed), want false (conformant)")
@@ -189,7 +193,7 @@ func TestCheckHypothesisConformance_NonConformantFailsAndRecordsCounterexample(t
 	// hypothesis is non-conformant for all of them.
 	failed := checkHypothesisConformance(
 		context.Background(), db, sb, "unused", []string{"WRITE", `{"output.shipping_fee":"99.00"}`},
-		h, "demo-area::demo::shipping-rule", "test-spec-version", concepts, nil, &bytes.Buffer{},
+		h, "demo-area::demo::shipping-rule", "test-spec-version", false, concepts, nil, &bytes.Buffer{},
 	)
 	if !failed {
 		t.Error("checkHypothesisConformance = false, want true (non-conformant)")
@@ -215,6 +219,63 @@ func TestCheckHypothesisConformance_NonConformantFailsAndRecordsCounterexample(t
 	}
 }
 
+func TestCheckHypothesisConformance_IsLawConformantSetsLawStatusConformant(t *testing.T) {
+	h, concepts := fixtureHypothesis(t)
+	db := openCheckTestStore(t)
+	sb := &sandbox.Sandbox{DockerBinary: fakeImplPath}
+
+	checkHypothesisConformance(
+		context.Background(), db, sb, "unused", []string{"WRITE", `{"output.shipping_fee":"7.50"}`},
+		h, "demo-area::demo::shipping-rule", "test-spec-version", true, concepts, nil, &bytes.Buffer{},
+	)
+
+	status, err := userdefinedlaws.GetStatus(db, "demo-area::demo::shipping-rule::fee-matches")
+	if err != nil {
+		t.Fatalf("GetStatus returned unexpected error: %v", err)
+	}
+	if status != userdefinedlaws.Conformant {
+		t.Errorf("law status = %v, want Conformant", status)
+	}
+}
+
+func TestCheckHypothesisConformance_IsLawNonConformantSetsLawStatusViolated(t *testing.T) {
+	h, concepts := fixtureHypothesis(t)
+	db := openCheckTestStore(t)
+	sb := &sandbox.Sandbox{DockerBinary: fakeImplPath}
+
+	checkHypothesisConformance(
+		context.Background(), db, sb, "unused", []string{"WRITE", `{"output.shipping_fee":"99.00"}`},
+		h, "demo-area::demo::shipping-rule", "test-spec-version", true, concepts, nil, &bytes.Buffer{},
+	)
+
+	status, err := userdefinedlaws.GetStatus(db, "demo-area::demo::shipping-rule::fee-matches")
+	if err != nil {
+		t.Fatalf("GetStatus returned unexpected error: %v", err)
+	}
+	if status != userdefinedlaws.Violated {
+		t.Errorf("law status = %v, want Violated", status)
+	}
+}
+
+func TestCheckHypothesisConformance_NotIsLawNeverSetsLawStatus(t *testing.T) {
+	h, concepts := fixtureHypothesis(t)
+	db := openCheckTestStore(t)
+	sb := &sandbox.Sandbox{DockerBinary: fakeImplPath}
+
+	checkHypothesisConformance(
+		context.Background(), db, sb, "unused", []string{"WRITE", `{"output.shipping_fee":"99.00"}`},
+		h, "demo-area::demo::shipping-rule", "test-spec-version", false, concepts, nil, &bytes.Buffer{},
+	)
+
+	status, err := userdefinedlaws.GetStatus(db, "demo-area::demo::shipping-rule::fee-matches")
+	if err != nil {
+		t.Fatalf("GetStatus returned unexpected error: %v", err)
+	}
+	if status != userdefinedlaws.Unverified {
+		t.Errorf("law status for a plain (non-law) hypothesis = %v, want Unverified (never set)", status)
+	}
+}
+
 func TestCheckHypothesisConformance_UnfalsifiableIsRejectedWithoutRunningConformance(t *testing.T) {
 	concepts := map[string]cjtr.Concept{
 		"order type": {Name: "order type", Kind: cjtr.VariableConcept, Variable: "input.order_type", OneOf: []string{"regular"}},
@@ -233,7 +294,7 @@ func TestCheckHypothesisConformance_UnfalsifiableIsRejectedWithoutRunningConform
 	var stdout bytes.Buffer
 	failed := checkHypothesisConformance(
 		context.Background(), db, sb, "unused", []string{"WRITE", `{}`},
-		h, "demo-area::demo::some-rule", "test-spec-version", concepts, nil, &stdout,
+		h, "demo-area::demo::some-rule", "test-spec-version", false, concepts, nil, &stdout,
 	)
 	if !failed {
 		t.Error("checkHypothesisConformance for an unfalsifiable hypothesis = false, want true (rejected)")
@@ -266,7 +327,7 @@ func TestCheckHypothesisConformance_NoExamplesIsTypeAOmission(t *testing.T) {
 	var stdout bytes.Buffer
 	failed := checkHypothesisConformance(
 		context.Background(), db, sb, "unused", []string{"WRITE", `{}`},
-		h, "demo-area::demo::some-rule", "test-spec-version", concepts, nil, &stdout,
+		h, "demo-area::demo::some-rule", "test-spec-version", false, concepts, nil, &stdout,
 	)
 	if failed {
 		t.Error("checkHypothesisConformance with no examples = true, want false (nothing to fail on)")
@@ -305,7 +366,7 @@ func TestCheckHypothesisConformance_ExamplesButNoBoundedInputIsTypeAOmission(t *
 	var stdout bytes.Buffer
 	failed := checkHypothesisConformance(
 		context.Background(), db, sb, "unused", []string{"WRITE", `{}`},
-		h, "demo-area::demo::some-rule", "test-spec-version", concepts, nil, &stdout,
+		h, "demo-area::demo::some-rule", "test-spec-version", false, concepts, nil, &stdout,
 	)
 	if failed {
 		t.Error("checkHypothesisConformance with no bounded input = true, want false")
@@ -319,7 +380,7 @@ func TestRecordEvidence_NoDeclaredIDIsNotRecorded(t *testing.T) {
 	db := openCheckTestStore(t)
 	h := cjtr.Hypothesis{Name: "anonymous"} // ID left empty
 
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", &bytes.Buffer{})
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", false, &bytes.Buffer{})
 
 	history, err := evidenceledger.History(db, "demo-area::demo::some-rule::anonymous")
 	if err != nil {
@@ -334,7 +395,7 @@ func TestRecordEvidence_InconclusiveIsRecordedAsOpen(t *testing.T) {
 	db := openCheckTestStore(t)
 	h := cjtr.Hypothesis{Name: "timed out", ID: "timed-out"}
 
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Inconclusive, nil, "image", "spec-version", &bytes.Buffer{})
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Inconclusive, nil, "image", "spec-version", false, &bytes.Buffer{})
 
 	history, err := evidenceledger.History(db, "demo-area::demo::some-rule::timed-out")
 	if err != nil {
@@ -362,7 +423,7 @@ func TestRecordEvidence_NonConformantDemotesFromPriorStage(t *testing.T) {
 	}
 
 	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.NonConformant,
-		&conformancecycle.Counterexample{Value: "x = -1"}, "image", "spec-version", &bytes.Buffer{})
+		&conformancecycle.Counterexample{Value: "x = -1"}, "image", "spec-version", false, &bytes.Buffer{})
 
 	history, err := evidenceledger.History(db, hypothesisID)
 	if err != nil {
@@ -387,7 +448,7 @@ func TestRecordEvidence_ConformantCarriesPriorStageForward(t *testing.T) {
 		t.Fatalf("Append returned unexpected error: %v", err)
 	}
 
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", &bytes.Buffer{})
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", false, &bytes.Buffer{})
 
 	history, err := evidenceledger.History(db, hypothesisID)
 	if err != nil {

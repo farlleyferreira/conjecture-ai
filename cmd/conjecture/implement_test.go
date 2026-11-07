@@ -43,6 +43,48 @@ rules:
           - {flag: x, result: 7.50}
 `
 
+// implementFixtureWithLaw adds a "user_defined_laws" entry (with its
+// own declared "id", unlike verify_test.go's fixtureCjtrWithLaw, which
+// needs none since runVerify never persists anything by id) to
+// confirm [findHypothesis] reports a law as isLaw=true rather than
+// treating it as a plain hypothesis.
+const implementFixtureWithLaw = `
+conjecture: 1.0.0
+
+phenomenon: demo implement
+
+concepts:
+  flag:
+    variable: input.flag
+    one_of: [x]
+  result:
+    variable: output.result
+    type: decimal
+
+rules:
+  result rule:
+    id: result-rule
+    user_defined_laws:
+      result law:
+        id: result-law
+        always: the result is 7.50
+        examples:
+          - {flag: x, result: 7.50}
+`
+
+func writeImplementFixtureWithLaw(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "phenomena", "demo-area")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	path := filepath.Join(dir, "demo.cjtr")
+	if err := os.WriteFile(path, []byte(implementFixtureWithLaw), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	return path
+}
+
 func writeImplementFixture(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "phenomena", "demo-area")
@@ -107,12 +149,34 @@ func TestFindHypothesis_Found(t *testing.T) {
 		t.Fatalf("loadFicha returned unexpected error: %v", err)
 	}
 
-	rule, h, err := findHypothesis(f, "result-rule", "result-matches")
+	rule, h, isLaw, err := findHypothesis(f, "result-rule", "result-matches")
 	if err != nil {
 		t.Fatalf("findHypothesis returned unexpected error: %v", err)
 	}
 	if rule.ID != "result-rule" || h.ID != "result-matches" {
 		t.Errorf("findHypothesis returned rule %+v, hypothesis %+v", rule, h)
+	}
+	if isLaw {
+		t.Error("findHypothesis reported isLaw = true for a plain hypothesis, want false")
+	}
+}
+
+func TestFindHypothesis_FoundLawReportsIsLaw(t *testing.T) {
+	path := writeImplementFixtureWithLaw(t)
+	f, err := loadFicha(path)
+	if err != nil {
+		t.Fatalf("loadFicha returned unexpected error: %v", err)
+	}
+
+	rule, h, isLaw, err := findHypothesis(f, "result-rule", "result-law")
+	if err != nil {
+		t.Fatalf("findHypothesis returned unexpected error: %v", err)
+	}
+	if rule.ID != "result-rule" || h.ID != "result-law" {
+		t.Errorf("findHypothesis returned rule %+v, hypothesis %+v", rule, h)
+	}
+	if !isLaw {
+		t.Error("findHypothesis reported isLaw = false for a user-defined law, want true")
 	}
 }
 
@@ -123,7 +187,7 @@ func TestFindHypothesis_UnknownRule(t *testing.T) {
 		t.Fatalf("loadFicha returned unexpected error: %v", err)
 	}
 
-	_, _, err = findHypothesis(f, "does-not-exist", "result-matches")
+	_, _, _, err = findHypothesis(f, "does-not-exist", "result-matches")
 	if err == nil {
 		t.Fatal("findHypothesis with an unknown rule id = nil error, want one")
 	}
@@ -136,7 +200,7 @@ func TestFindHypothesis_UnknownHypothesis(t *testing.T) {
 		t.Fatalf("loadFicha returned unexpected error: %v", err)
 	}
 
-	_, _, err = findHypothesis(f, "result-rule", "does-not-exist")
+	_, _, _, err = findHypothesis(f, "result-rule", "does-not-exist")
 	if err == nil {
 		t.Fatal("findHypothesis with an unknown hypothesis id = nil error, want one")
 	}
@@ -149,7 +213,7 @@ func TestRunImplementLoop_SucceedsWithinBudgetAndRecordsEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadFicha returned unexpected error: %v", err)
 	}
-	rule, h, err := findHypothesis(f, "result-rule", "result-matches")
+	rule, h, isLaw, err := findHypothesis(f, "result-rule", "result-matches")
 	if err != nil {
 		t.Fatalf("findHypothesis returned unexpected error: %v", err)
 	}
@@ -158,7 +222,7 @@ func TestRunImplementLoop_SucceedsWithinBudgetAndRecordsEvidence(t *testing.T) {
 	client := &fakeImplementerClient{}
 	sb := &sandbox.Sandbox{DockerBinary: fakeImplementPath}
 
-	verdict, err := runImplementLoop(context.Background(), db, sb, client, rule, h, 3, "test-spec-version", f.concepts, f.tables, &bytes.Buffer{})
+	verdict, err := runImplementLoop(context.Background(), db, sb, client, rule, h, 3, "test-spec-version", isLaw, f.concepts, f.tables, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("runImplementLoop returned unexpected error: %v", err)
 	}
@@ -204,7 +268,7 @@ func TestRunImplementLoop_NoBoundedInputIsTypeAOmission(t *testing.T) {
 	sb := &sandbox.Sandbox{DockerBinary: fakeImplementPath}
 
 	var stdout bytes.Buffer
-	verdict, err := runImplementLoop(context.Background(), db, sb, client, rule, h, 3, "test-spec-version", concepts, nil, &stdout)
+	verdict, err := runImplementLoop(context.Background(), db, sb, client, rule, h, 3, "test-spec-version", false, concepts, nil, &stdout)
 	if err != nil {
 		t.Fatalf("runImplementLoop returned unexpected error: %v", err)
 	}
@@ -226,7 +290,7 @@ func TestRunImplementLoop_ExhaustsBudgetWithoutConforming(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadFicha returned unexpected error: %v", err)
 	}
-	rule, h, err := findHypothesis(f, "result-rule", "result-matches")
+	rule, h, isLaw, err := findHypothesis(f, "result-rule", "result-matches")
 	if err != nil {
 		t.Fatalf("findHypothesis returned unexpected error: %v", err)
 	}
@@ -235,7 +299,7 @@ func TestRunImplementLoop_ExhaustsBudgetWithoutConforming(t *testing.T) {
 	client := &fakeImplementerClient{}
 	sb := &sandbox.Sandbox{DockerBinary: fakeImplementPath}
 
-	verdict, err := runImplementLoop(context.Background(), db, sb, client, rule, h, 2, "test-spec-version", f.concepts, f.tables, &bytes.Buffer{})
+	verdict, err := runImplementLoop(context.Background(), db, sb, client, rule, h, 2, "test-spec-version", isLaw, f.concepts, f.tables, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("runImplementLoop returned unexpected error: %v", err)
 	}
