@@ -311,6 +311,14 @@ func checkHypothesisConformance(
 // and swarm robustness; hidden-sample testing across code versions),
 // so this only ever fires the one promotion edge gated purely by case
 // count.
+//
+// This also wires "Evidence flagged stale after a dependency
+// changes": when a prior record exists for the same hypothesis,
+// [evidenceledger.Stale] compares its own validity hash against this
+// run's, and a stdout warning is printed when they differ - the stage
+// still carries forward as recorded (the specification says flagged,
+// not discarded or reset), so this is a visibility fix, not a
+// behavior change to anything else this function does.
 func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict conformancecycle.Verdict, counterexample *conformancecycle.Counterexample, image, specVersion string, caseCount int, isLaw bool, stdout io.Writer) {
 	if h.ID == "" {
 		_, _ = fmt.Fprintf(stdout, "%s: %s: no declared \"id\", evidence not recorded\n", compositeID, h.Name)
@@ -326,6 +334,7 @@ func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict c
 	// because compositeID is already a joined string, not a single
 	// segment, and would fail ComposeID's own per-segment validation.
 	hypothesisID := compositeID + "::" + h.ID
+	currentValidityHash := evidenceledger.ValidityHash(specVersion, image, version.String(), "", "")
 
 	stage := evidenceledger.Hypothesis
 	if previous, found, err := evidenceledger.Latest(db, hypothesisID); err != nil {
@@ -333,6 +342,15 @@ func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict c
 		return
 	} else if found {
 		stage = previous.Stage
+		// "Evidence flagged stale after a dependency changes": the
+		// stage still carries forward as recorded (the specification
+		// says this is flagged, not that stale evidence is discarded
+		// or that the stage resets), but a caller reading stdout is
+		// told plainly that the harness/code/spec version this stage
+		// was last earned against is no longer the one being used now.
+		if evidenceledger.Stale(previous.ValidityHash, currentValidityHash) {
+			_, _ = fmt.Fprintf(stdout, "%s: %s: WARNING: prior evidence is stale - the harness, code, or spec version it was recorded against has since changed\n", compositeID, h.Name)
+		}
 	}
 	if verdict == conformancecycle.NonConformant {
 		stage = evidenceledger.Demote(stage)
@@ -343,7 +361,7 @@ func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict c
 		Stage:        stage,
 		ProducedBy:   "conjecture check " + version.String(),
 		Unchecked:    "bounded proof and complete proof rigor levels not run",
-		ValidityHash: evidenceledger.ValidityHash(specVersion, image, version.String(), "", ""),
+		ValidityHash: currentValidityHash,
 	}
 	switch verdict {
 	case conformancecycle.Conformant:
