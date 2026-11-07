@@ -32,7 +32,12 @@ import (
 // fixture (see its own doc comment), used only by implement_test.go -
 // built here too since a package's test binary may only have one
 // TestMain.
-var fakeImplPath, fakeImplementPath string
+//
+// fakeZ3Path is a fresh build of internal/expressioncore's own
+// testdata/fakez3 fixture, used only by consistency_test.go - the
+// same real "z3" stand-in that package's own tests use, reused here
+// rather than maintaining an independent copy of it.
+var fakeImplPath, fakeImplementPath, fakeZ3Path string
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "checktest-fakeimpl")
@@ -48,6 +53,7 @@ func TestMain(m *testing.M) {
 	}
 	fakeImplPath = filepath.Join(dir, "fakeimpl"+exeSuffix)
 	fakeImplementPath = filepath.Join(dir, "fakeimplement"+exeSuffix)
+	fakeZ3Path = filepath.Join(dir, "fakez3"+exeSuffix)
 
 	goBin := "go"
 	if runtime.GOOS == "windows" {
@@ -58,6 +64,7 @@ func TestMain(m *testing.M) {
 	for _, build := range []struct{ out, pkg string }{
 		{fakeImplPath, "../../internal/conformancecycle/testdata/fakeimpl"},
 		{fakeImplementPath, "./testdata/fakeimplement"},
+		{fakeZ3Path, "../../internal/expressioncore/testdata/fakez3"},
 	} {
 		buildCmd := exec.Command(goBin, "build", "-o", build.out, build.pkg)
 		if out, err := buildCmd.CombinedOutput(); err != nil {
