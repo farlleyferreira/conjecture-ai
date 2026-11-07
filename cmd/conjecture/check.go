@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
 	"github.com/farlleyferreira/conjecture-ai/internal/conformancecycle"
@@ -16,6 +17,7 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/sandbox"
 	"github.com/farlleyferreira/conjecture-ai/internal/specjudge"
 	"github.com/farlleyferreira/conjecture-ai/internal/version"
+	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 )
 
 const checkUsage = "usage: conjecture check <file.cjtr> <docker-image> <command...>"
@@ -70,6 +72,10 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	}
 	defer func() { _ = db.Close() }()
 	if err := evidenceledger.EnsureSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	if err := workqueue.EnsureSchema(db); err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
@@ -267,5 +273,25 @@ func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict c
 
 	if _, err := evidenceledger.Append(db, evidence); err != nil {
 		_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR recording evidence: %v\n", compositeID, h.Name, err)
+		return
+	}
+
+	// work-queue's own "single queue... that drives what conjecture
+	// works on next": a confirmed violation is exactly the kind of
+	// blocker-tier work the specification's own scenario names ("a
+	// blocker-tier item... preempts any background-tier item"). Weight
+	// 1 and severity 1 are this integration's own chosen defaults -
+	// nothing scores a hypothesis's own weight or a violation's own
+	// severity anywhere in this codebase yet (the same gap
+	// MeetsPromotionThreshold's own missing per-hypothesis weight
+	// already names), so a fixed, disclosed default is used rather
+	// than inventing a scoring rule. Re-queueing the same already-
+	// queued hypothesis is not an error worth reporting: Add's
+	// duplicate-ID rejection exists to catch a caller bug, not this
+	// expected case of checking the same hypothesis again while its
+	// prior failure is still unaddressed.
+	if verdict == conformancecycle.NonConformant {
+		item := workqueue.Item{ID: hypothesisID, Tier: workqueue.Blocker, Weight: 1, Severity: 1, CreatedAt: time.Now().UTC()}
+		_ = workqueue.Add(db, item)
 	}
 }
