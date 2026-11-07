@@ -1,12 +1,15 @@
 // Package hardwarescheduler implements the hardware-scheduler
 // capability's own-machine checks (openspec/specs/hardware-scheduler/
-// spec.md): the minimum hardware requirement, and (eventually) the
-// local scheduling rules that keep the adversarial SLM, the system
-// under test, and heavy background work from competing for the same
-// machine at the wrong time. This first slice only implements the
-// minimum-RAM check - the scheduling rules need the adversarial SLM
-// and conformance-cycle's own execution step, neither built yet, to
-// have anything to schedule between.
+// spec.md): the minimum hardware requirement, and the local
+// scheduling policy (see schedule.go) that keep the adversarial SLM,
+// the system under test, and heavy background work from competing for
+// the same machine at the wrong time. Measuring the facts that policy
+// decides over - whether the system under test is currently under
+// heavy load, whether the user is actively using the machine - is not
+// implemented here: no caller in this codebase runs the adversarial-
+// SLM attack loop or a background verification pass from a real
+// invocation yet to have real load to measure (see schedule.go's own
+// doc comment).
 package hardwarescheduler
 
 import (
