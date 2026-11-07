@@ -292,3 +292,56 @@ func TestRecordEvidence_InconclusiveIsRecordedAsOpen(t *testing.T) {
 		t.Error("recorded evidence has empty Open, want a note that the result was inconclusive")
 	}
 }
+
+func TestRecordEvidence_NonConformantDemotesFromPriorStage(t *testing.T) {
+	db := openCheckTestStore(t)
+	h := cjtr.Hypothesis{Name: "demoted", ID: "demoted"}
+	hypothesisID := "demo-area::demo::some-rule::demoted"
+
+	// Seed a prior record at Thesis, as if an earlier run had already
+	// promoted it there.
+	if _, err := evidenceledger.Append(db, evidenceledger.Evidence{
+		HypothesisID: hypothesisID, Stage: evidenceledger.Thesis, ValidityHash: []byte("x"),
+	}); err != nil {
+		t.Fatalf("Append returned unexpected error: %v", err)
+	}
+
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.NonConformant,
+		&conformancecycle.Counterexample{Value: "x = -1"}, "image", "spec-version", &bytes.Buffer{})
+
+	history, err := evidenceledger.History(db, hypothesisID)
+	if err != nil {
+		t.Fatalf("History returned unexpected error: %v", err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("len(history) = %d, want 2", len(history))
+	}
+	if history[1].Stage != evidenceledger.Hypothesis {
+		t.Errorf("demoted record's Stage = %v, want %v (one level below Thesis)", history[1].Stage, evidenceledger.Hypothesis)
+	}
+}
+
+func TestRecordEvidence_ConformantCarriesPriorStageForward(t *testing.T) {
+	db := openCheckTestStore(t)
+	h := cjtr.Hypothesis{Name: "steady", ID: "steady"}
+	hypothesisID := "demo-area::demo::some-rule::steady"
+
+	if _, err := evidenceledger.Append(db, evidenceledger.Evidence{
+		HypothesisID: hypothesisID, Stage: evidenceledger.Theory, ValidityHash: []byte("x"),
+	}); err != nil {
+		t.Fatalf("Append returned unexpected error: %v", err)
+	}
+
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", &bytes.Buffer{})
+
+	history, err := evidenceledger.History(db, hypothesisID)
+	if err != nil {
+		t.Fatalf("History returned unexpected error: %v", err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("len(history) = %d, want 2", len(history))
+	}
+	if history[1].Stage != evidenceledger.Theory {
+		t.Errorf("Stage = %v, want %v carried forward unchanged (promotion not implemented)", history[1].Stage, evidenceledger.Theory)
+	}
+}
