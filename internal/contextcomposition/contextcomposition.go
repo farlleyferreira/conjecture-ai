@@ -1,20 +1,23 @@
 // Package contextcomposition implements the grounded pieces of the
 // context-composition capability (openspec/specs/context-composition/
 // spec.md): the archive-not-delete lifecycle state, the four
-// composition modes' closed vocabulary, and a conflict-precedence
-// order over those four modes (see [PrecedenceOrder]'s own doc comment
-// for where that order comes from - the specification itself gives
-// none).
+// composition modes' closed vocabulary, a conflict-precedence order
+// over those four modes (see [PrecedenceOrder]'s own doc comment for
+// where that order comes from - the specification itself gives none),
+// and composition-by-reference itself (see reference.go) - the one
+// composition mode the specification gives a concrete scenario for
+// ("does not copy content").
 //
 // Deliberately not attempted here: the lifecycle commands themselves
 // (list/resume/open/origin/diff/restore need real storage - see
 // internal/persistence - this package only models the state those
-// commands would act on), composition-by-reference's own "does not
-// copy content" rule (a storage-layer property no pure function can
-// check without a real store to point into), and resolving a conflict
-// between two sources composed by the *same* mode (see
-// [ResolveConflict]'s own doc comment - this is a separate, still-open
-// question PrecedenceOrder does not answer).
+// commands would act on), the other three composition modes
+// (embedding, inheritance, view - the specification names them but
+// gives no scenario describing how any of their actual semantics
+// differ, unlike reference's own concrete one, so none is guessed at
+// here), and resolving a conflict between two sources composed by the
+// *same* mode (see [ResolveConflict]'s own doc comment - this is a
+// separate, still-open question PrecedenceOrder does not answer).
 package contextcomposition
 
 import (
