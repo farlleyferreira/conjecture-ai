@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/farlleyferreira/conjecture-ai/internal/knowledgebases"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 )
 
@@ -114,43 +115,54 @@ func TestRegisterBase_MissingPath(t *testing.T) {
 }
 
 func TestRunBaseSearch_WrongArgCount(t *testing.T) {
-	db := openTestKnowledgeStore(t)
+	// No query at all: args fail validation before the real per-OS
+	// store is ever touched, same as TestRunBase_UnknownSubcommand
+	// already relies on for runBase itself - safe to call directly.
 	var stdout, stderr bytes.Buffer
-	code := runBaseSearch(db, []string{}, &stdout, &stderr)
+	code := runBaseSearch([]string{}, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("runBaseSearch with no query = %d, want 1", code)
 	}
 }
 
-func TestRunBaseSearch_NoMatchesReportsPlainly(t *testing.T) {
+func TestSearchBases_NoMatchesReportsPlainly(t *testing.T) {
 	db := openTestKnowledgeStore(t)
 	var stdout, stderr bytes.Buffer
-	code := runBaseSearch(db, []string{"nothing indexed matches this"}, &stdout, &stderr)
+	code := searchBases(db, "nothing indexed matches this", &stdout, &stderr)
 	if code != 0 {
-		t.Errorf("runBaseSearch with no matches = %d, want 0", code)
+		t.Errorf("searchBases with no matches = %d, want 0", code)
 	}
 	if !strings.Contains(stdout.String(), "no matches") {
 		t.Errorf("stdout = %q, want it to report no matches", stdout.String())
 	}
 }
 
-func TestRunBaseAdd_IndexesForSearchImmediately(t *testing.T) {
+func TestSearchBases_FindsWhatWasRegisteredAndIndexed(t *testing.T) {
+	// Registration and indexing tested at their own store-independent
+	// boundary (registerBase, knowledgebases.IndexBase - already
+	// covered in depth by internal/knowledgebases/search_test.go), not
+	// through the CLI dispatcher, same as every other "Add" assertion
+	// in this file.
 	db := openTestKnowledgeStore(t)
 	path := filepath.Join(t.TempDir(), "lgpd.txt")
 	if err := os.WriteFile(path, []byte("o titular pode solicitar a exclusao dos dados"), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
-
-	var addOut, addErr bytes.Buffer
-	code := runBaseAdd(db, []string{path, "--authority", "reference", "--scope", "project"}, &addOut, &addErr)
-	if code != 0 {
-		t.Fatalf("runBaseAdd = %d, want 0 (stderr: %q)", code, addErr.String())
+	stored, err := registerBase(db, path, "reference", "project", "")
+	if err != nil {
+		t.Fatalf("registerBase returned unexpected error: %v", err)
+	}
+	if err := knowledgebases.EnsureSearchSchema(db); err != nil {
+		t.Fatalf("EnsureSearchSchema returned unexpected error: %v", err)
+	}
+	if err := knowledgebases.IndexBase(db, stored); err != nil {
+		t.Fatalf("IndexBase returned unexpected error: %v", err)
 	}
 
 	var searchOut, searchErr bytes.Buffer
-	code = runBaseSearch(db, []string{"exclusao"}, &searchOut, &searchErr)
+	code := searchBases(db, "exclusao", &searchOut, &searchErr)
 	if code != 0 {
-		t.Fatalf("runBaseSearch = %d, want 0 (stderr: %q)", code, searchErr.String())
+		t.Fatalf("searchBases = %d, want 0 (stderr: %q)", code, searchErr.String())
 	}
 	if !strings.Contains(searchOut.String(), path) {
 		t.Errorf("search output = %q, want it to mention %q", searchOut.String(), path)

@@ -29,30 +29,32 @@ func runBase(args []string, stdout, stderr io.Writer) int {
 	}
 	subcommand, rest := args[0], args[1:]
 
-	repoRoot, err := os.Getwd()
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
-		return 1
-	}
-	db, err := persistence.OpenStore(repoRoot)
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
-		return 1
-	}
-	defer func() { _ = db.Close() }()
-
 	switch subcommand {
 	case "add":
-		return runBaseAdd(db, rest, stdout, stderr)
+		return runBaseAdd(rest, stdout, stderr)
 	case "search":
-		return runBaseSearch(db, rest, stdout, stderr)
+		return runBaseSearch(rest, stdout, stderr)
 	default:
 		_, _ = fmt.Fprintln(stderr, baseUsage)
 		return 1
 	}
 }
 
-func runBaseAdd(db *sql.DB, args []string, stdout, stderr io.Writer) int {
+// openRepoStore opens the local, per-repository store, assuming the
+// current working directory is the repository root. Each subcommand
+// calls this only after its own argument parsing has already
+// succeeded - a missing or malformed flag is reported without ever
+// touching the store, same as a usage error for an unrecognized
+// subcommand already is.
+func openRepoStore() (*sql.DB, error) {
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	return persistence.OpenStore(repoRoot)
+}
+
+func runBaseAdd(args []string, stdout, stderr io.Writer) int {
 	var path, authorityFlag, scope, reviewDate string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -83,6 +85,13 @@ func runBaseAdd(db *sql.DB, args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, baseUsage)
 		return 1
 	}
+
+	db, err := openRepoStore()
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	defer func() { _ = db.Close() }()
 
 	stored, err := registerBase(db, path, authorityFlag, scope, reviewDate)
 	if err != nil {
@@ -115,18 +124,32 @@ func runBaseAdd(db *sql.DB, args []string, stdout, stderr io.Writer) int {
 // runBaseSearch implements "conjecture base search <query>" -
 // knowledge-bases' "Local indexing for retrieval" textual-search half,
 // over whatever every "conjecture base add" has indexed so far.
-func runBaseSearch(db *sql.DB, args []string, stdout, stderr io.Writer) int {
+func runBaseSearch(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 1 {
 		_, _ = fmt.Fprintln(stderr, baseUsage)
 		return 1
 	}
 
+	db, err := openRepoStore()
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	defer func() { _ = db.Close() }()
+
+	return searchBases(db, args[0], stdout, stderr)
+}
+
+// searchBases is "conjecture base search"'s store-independent half, so
+// a test can exercise it against a temporary store instead of the
+// real per-OS one [persistence.OpenStore] always resolves to.
+func searchBases(db *sql.DB, query string, stdout, stderr io.Writer) int {
 	if err := knowledgebases.EnsureSearchSchema(db); err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
 
-	results, err := knowledgebases.Search(db, args[0])
+	results, err := knowledgebases.Search(db, query)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
