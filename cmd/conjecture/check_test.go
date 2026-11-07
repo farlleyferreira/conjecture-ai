@@ -24,7 +24,12 @@ import (
 // same real "docker + implementation" stand-in that package's own
 // tests use, reused here instead of maintaining an independent copy
 // of it.
-var fakeImplPath string
+//
+// fakeImplementPath is this package's own testdata/fakeimplement
+// fixture (see its own doc comment), used only by implement_test.go -
+// built here too since a package's test binary may only have one
+// TestMain.
+var fakeImplPath, fakeImplementPath string
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "checktest-fakeimpl")
@@ -34,10 +39,12 @@ func TestMain(m *testing.M) {
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 
-	fakeImplPath = filepath.Join(dir, "fakeimpl")
+	exeSuffix := ""
 	if runtime.GOOS == "windows" {
-		fakeImplPath += ".exe"
+		exeSuffix = ".exe"
 	}
+	fakeImplPath = filepath.Join(dir, "fakeimpl"+exeSuffix)
+	fakeImplementPath = filepath.Join(dir, "fakeimplement"+exeSuffix)
 
 	goBin := "go"
 	if runtime.GOOS == "windows" {
@@ -45,10 +52,15 @@ func TestMain(m *testing.M) {
 	}
 	goBin = filepath.Join(runtime.GOROOT(), "bin", goBin)
 
-	buildCmd := exec.Command(goBin, "build", "-o", fakeImplPath, "../../internal/conformancecycle/testdata/fakeimpl")
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "building fakeimpl: %v\n%s", err, out)
-		os.Exit(1)
+	for _, build := range []struct{ out, pkg string }{
+		{fakeImplPath, "../../internal/conformancecycle/testdata/fakeimpl"},
+		{fakeImplementPath, "./testdata/fakeimplement"},
+	} {
+		buildCmd := exec.Command(goBin, "build", "-o", build.out, build.pkg)
+		if out, err := buildCmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "building %s: %v\n%s", build.pkg, err, out)
+			os.Exit(1)
+		}
 	}
 
 	os.Exit(m.Run())
