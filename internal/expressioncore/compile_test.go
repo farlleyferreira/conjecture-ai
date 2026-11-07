@@ -1,6 +1,9 @@
 package expressioncore
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func mustDecimal(t *testing.T, s string) Decimal {
 	t.Helper()
@@ -88,5 +91,36 @@ func TestCompileComparison_StringEquality(t *testing.T) {
 func TestCompileComparison_UnrecognizedComparator(t *testing.T) {
 	if _, err := CompileComparison("is one of", DecimalType); err == nil {
 		t.Error(`CompileComparison("is one of") = nil error, want one (not in cjtr's supported vocabulary)`)
+	}
+}
+
+// TestEvalComparison_ThousandsPerSecond grounds "Local performance
+// within hardware bounds": "The expression core SHALL be able to
+// perform at least thousands of evaluations per second on a machine
+// with 6 GB of RAM." It compiles once (as a real caller - cjtr.Evaluate's
+// own compare() - does, relying on CompileComparison's own cache
+// rather than recompiling per call) and times 10,000 evaluations,
+// asserting that batch completes within one second - a looser bound
+// than "at least thousands per second" demands, so this fails loudly
+// well before the budget is actually at risk, on any machine, not
+// just a 6 GB one this test has no way to provision.
+func TestEvalComparison_ThousandsPerSecond(t *testing.T) {
+	prg, err := CompileComparison("is at least", DecimalType)
+	if err != nil {
+		t.Fatalf("CompileComparison returned unexpected error: %v", err)
+	}
+	term := mustDecimal(t, "7.50")
+	value := mustDecimal(t, "0.00")
+
+	const n = 10000
+	start := time.Now()
+	for i := 0; i < n; i++ {
+		if _, err := EvalComparison(prg, term, value, Decimal{}); err != nil {
+			t.Fatalf("EvalComparison returned unexpected error: %v", err)
+		}
+	}
+	elapsed := time.Since(start)
+	if elapsed > time.Second {
+		t.Errorf("%d evaluations took %v, want well under 1s (thousands/sec budget)", n, elapsed)
 	}
 }

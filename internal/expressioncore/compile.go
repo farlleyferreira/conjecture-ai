@@ -2,6 +2,7 @@ package expressioncore
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
@@ -48,6 +49,19 @@ func CompileComparison(comparator string, operandType *cel.Type) (cel.Program, e
 		return nil, fmt.Errorf("expressioncore: %q is not a recognized comparator", comparator)
 	}
 
+	// There are only a handful of (comparator, operandType) pairs ever
+	// requested - every value [comparatorExpressions] names, times two
+	// operand types - so caching the compiled result keeps a caller
+	// like cjtr.Evaluate (compare()), which may call this once per
+	// comparison across thousands of sampled cases, from re-parsing
+	// and re-type-checking the same CEL expression every time: "Local
+	// performance within hardware bounds... thousands of evaluations
+	// per second."
+	cacheKey := comparator + "|" + operandType.TypeName()
+	if cached, ok := programCache.Load(cacheKey); ok {
+		return cached.(cel.Program), nil
+	}
+
 	opts := []cel.EnvOption{
 		cel.Variable("term", operandType),
 		cel.Variable("value", operandType),
@@ -72,8 +86,16 @@ func CompileComparison(comparator string, operandType *cel.Type) (cel.Program, e
 	if err != nil {
 		return nil, fmt.Errorf("expressioncore: planning program for %q: %w", comparator, err)
 	}
+	programCache.Store(cacheKey, prg)
 	return prg, nil
 }
+
+// programCache memoizes CompileComparison's own result by "comparator|
+// operandType" - see CompileComparison's own doc comment for why.
+// cel.Program's own Eval is safe for concurrent use against the same
+// compiled Program (it carries no per-call mutable state), so sharing
+// one cached Program across callers is safe.
+var programCache sync.Map
 
 // EvalComparison evaluates prg (as returned by [CompileComparison])
 // against term, value, and value2 (ignored unless prg declared it -

@@ -20,10 +20,11 @@
 // condition this package exists so that decimal comparisons never
 // meet), this package registers its own exact-decimal CEL type
 // (Decimal, backed by math/big.Rat, the same representation
-// internal/cjtr's own hand-written evaluator already uses and for the
-// same reason) so decimal statements compile to CEL like anything
-// else, with FEEL staying a true fallback for whatever this still
-// cannot represent.
+// internal/cjtr's own parseExactDecimal already uses and for the same
+// reason) so decimal statements compile to CEL like anything else,
+// with FEEL staying a true fallback for whatever this still cannot
+// represent. internal/cjtr's own Evaluate now compiles every
+// comparison through this package rather than evaluating it by hand.
 package expressioncore
 
 import (
@@ -46,14 +47,12 @@ var DecimalType = types.NewObjectType("expressioncore.Decimal", traits.ComparerT
 // Decimal is one exact-decimal CEL value, backed by *big.Rat -
 // [big.Rat.SetString] parses decimal text exactly (e.g. "100.00"
 // becomes precisely 100, never a binary-float approximation), the
-// same reason internal/cjtr's own parseExactDecimal uses it. This
-// package does not import internal/cjtr (and nothing there imports
-// this package yet): the two independently satisfy the same exact-
-// decimal requirement, consistent with cjtr.Evaluate's own doc
-// comment that it is "not yet a compiler to CEL... nothing here
-// should be mistaken for the real expression-core capability" - a
-// later change, not this one, decides whether/how cjtr comes to use
-// this package instead of its own hand-written evaluator.
+// same reason internal/cjtr's own parseExactDecimal still uses it for
+// everything other than a comparison itself (falsifiability and
+// sampling's own boundary analysis, not evaluation). This package
+// still does not import internal/cjtr - cjtr.Evaluate imports this
+// package instead, for exactly the comparison step, keeping concept/
+// table resolution on cjtr's own side of the boundary.
 type Decimal struct {
 	rat *big.Rat
 }

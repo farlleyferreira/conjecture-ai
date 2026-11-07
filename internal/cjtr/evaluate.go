@@ -3,6 +3,8 @@ package cjtr
 import (
 	"fmt"
 	"math/big"
+
+	"github.com/farlleyferreira/conjecture-ai/internal/expressioncore"
 )
 
 // Bindings maps a variable path exactly as declared by a VariableConcept's
@@ -15,13 +17,17 @@ type Bindings map[string]string
 // file's declared concepts and a set of observed bindings, and reports
 // whether the comparison holds.
 //
-// Decimal concepts are compared exactly, via [math/big.Rat] - never
-// through a lossy float64 conversion, per the exact-decimal-arithmetic
-// requirement that runs through the whole specification. This is a direct
-// evaluator, not yet a compiler to CEL (the specification's chosen
-// expression engine, not started): the observable result is the same
-// either way, but nothing here should be mistaken for the real
-// expression-core capability.
+// Concept/table resolution (constant, variable, table lookup) stays
+// this package's own job - resolveValue/resolveStatementValue below,
+// unchanged. The final comparison step itself (compare, below)
+// delegates to internal/expressioncore: a decimal concept's values are
+// compared via [expressioncore.DecimalType] (exact, via [math/big.Rat]
+// underneath - never through a lossy float64 conversion, per the
+// exact-decimal-arithmetic requirement that runs through the whole
+// specification) and anything else via CEL's own native string
+// equality, so this package no longer evaluates a comparison by hand -
+// it compiles to CEL, the specification's own chosen expression
+// engine, like every other statement is meant to.
 func Evaluate(stmt Statement, concepts map[string]Concept, tables Tables, bindings Bindings) (bool, error) {
 	termConcept, ok := concepts[stmt.Term]
 	if !ok {
@@ -98,43 +104,65 @@ func resolveValue(c Concept, concepts map[string]Concept, tables Tables, binding
 	}
 }
 
-// compare applies comparator to termValue and valueValue; value2Value is
-// only used by the two-value comparators ("is between"/"is strictly
-// between"), where it is the upper bound (Y) and valueValue is the lower
-// bound (X).
+// compare applies comparator to termValue and valueValue via
+// internal/expressioncore - a CEL program, compiled once per
+// (comparator, operand type) pair and cached there, not re-compiled
+// on every call. value2Value is only used by the two-value
+// comparators ("is between"/"is strictly between"), where it is the
+// upper bound (Y) and valueValue is the lower bound (X); an empty
+// value2Value is expressioncore's own "not supplied" convention for
+// every other comparator, matching how [Evaluate] itself only ever
+// resolves a real Value2 for those two comparators.
+//
+// Which operand type to compile against is this function's own
+// decision, not expressioncore's: an ordering comparator ("is greater
+// than" and the rest) always parses its operands as exact decimals
+// regardless of the term concept's declared type - this package's own
+// prior, hand-written compare() did exactly this unconditionally via
+// numericCompare, so this preserves that rule rather than changing
+// it - and only an equality comparator ever compares plain text, when
+// termConcept is not itself a decimal concept.
 func compare(comparator string, termConcept Concept, termValue, valueValue, value2Value string) (bool, error) {
+	decimal := true
 	switch comparator {
-	case "is", "equals":
-		return valuesEqual(termConcept, termValue, valueValue)
-	case "is not", "does not equal":
-		eq, err := valuesEqual(termConcept, termValue, valueValue)
-		return !eq, err
-	case "is greater than":
-		return numericCompare(termValue, valueValue, func(c int) bool { return c > 0 })
-	case "is less than":
-		return numericCompare(termValue, valueValue, func(c int) bool { return c < 0 })
-	case "is at least":
-		return numericCompare(termValue, valueValue, func(c int) bool { return c >= 0 })
-	case "is at most":
-		return numericCompare(termValue, valueValue, func(c int) bool { return c <= 0 })
-	case "is between":
-		geLower, err := numericCompare(termValue, valueValue, func(c int) bool { return c >= 0 })
-		if err != nil || !geLower {
-			return false, err
-		}
-		return numericCompare(termValue, value2Value, func(c int) bool { return c <= 0 })
-	case "is strictly between":
-		gtLower, err := numericCompare(termValue, valueValue, func(c int) bool { return c > 0 })
-		if err != nil || !gtLower {
-			return false, err
-		}
-		return numericCompare(termValue, value2Value, func(c int) bool { return c < 0 })
-	default:
-		// ParseComparison only ever produces a Statement with one of the
-		// comparators above (see statement.go's supportedComparators), so
-		// reaching this means the two files have fallen out of sync.
-		return false, fmt.Errorf("evaluate: comparator %q has no evaluation rule", comparator)
+	case "is", "equals", "is not", "does not equal":
+		decimal = termConcept.Type == "decimal"
 	}
+
+	if decimal {
+		return compareDecimal(comparator, termValue, valueValue, value2Value)
+	}
+	return compareText(comparator, termValue, valueValue, value2Value)
+}
+
+func compareDecimal(comparator, termValue, valueValue, value2Value string) (bool, error) {
+	prg, err := expressioncore.CompileComparison(comparator, expressioncore.DecimalType)
+	if err != nil {
+		return false, fmt.Errorf("evaluate: %w", err)
+	}
+	term, err := expressioncore.NewDecimal(termValue)
+	if err != nil {
+		return false, err
+	}
+	value, err := expressioncore.NewDecimal(valueValue)
+	if err != nil {
+		return false, err
+	}
+	var value2 any = expressioncore.Decimal{}
+	if value2Value != "" {
+		if value2, err = expressioncore.NewDecimal(value2Value); err != nil {
+			return false, err
+		}
+	}
+	return expressioncore.EvalComparison(prg, term, value, value2)
+}
+
+func compareText(comparator, termValue, valueValue, value2Value string) (bool, error) {
+	prg, err := expressioncore.CompileComparison(comparator, expressioncore.StringType)
+	if err != nil {
+		return false, fmt.Errorf("evaluate: %w", err)
+	}
+	return expressioncore.EvalComparison(prg, termValue, valueValue, value2Value)
 }
 
 // valuesEqual compares two values for a decimal concept exactly (never via
@@ -152,20 +180,6 @@ func valuesEqual(termConcept Concept, a, b string) (bool, error) {
 		return ra.Cmp(rb) == 0, nil
 	}
 	return a == b, nil
-}
-
-// numericCompare compares a and b as exact decimals and applies ok to the
-// result of [big.Rat.Cmp] (negative, zero, or positive).
-func numericCompare(a, b string, ok func(cmp int) bool) (bool, error) {
-	ra, err := parseExactDecimal(a)
-	if err != nil {
-		return false, err
-	}
-	rb, err := parseExactDecimal(b)
-	if err != nil {
-		return false, err
-	}
-	return ok(ra.Cmp(rb)), nil
 }
 
 // parseExactDecimal parses s as an exact decimal number. big.Rat parses
