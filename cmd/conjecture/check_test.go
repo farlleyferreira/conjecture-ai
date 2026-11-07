@@ -18,6 +18,7 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/sandbox"
 	"github.com/farlleyferreira/conjecture-ai/internal/userdefinedlaws"
+	"github.com/farlleyferreira/conjecture-ai/internal/version"
 	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 )
 
@@ -548,6 +549,46 @@ func TestRecordEvidence_NonConformantDemotesFromPriorStage(t *testing.T) {
 	}
 	if history[1].Stage != evidenceledger.Hypothesis {
 		t.Errorf("demoted record's Stage = %v, want %v (one level below Thesis)", history[1].Stage, evidenceledger.Hypothesis)
+	}
+}
+
+func TestRecordEvidence_WarnsWhenPriorEvidenceIsStale(t *testing.T) {
+	db := openCheckTestStore(t)
+	h := cjtr.Hypothesis{Name: "stale check", ID: "stale-check"}
+	hypothesisID := "demo-area::demo::some-rule::stale-check"
+
+	if _, err := evidenceledger.Append(db, evidenceledger.Evidence{
+		HypothesisID: hypothesisID, Stage: evidenceledger.Thesis,
+		ValidityHash: evidenceledger.ValidityHash("old-spec-version", "image", "old-code-version", "", ""),
+	}); err != nil {
+		t.Fatalf("Append returned unexpected error: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "new-spec-version", 0, false, &stdout)
+
+	if !strings.Contains(stdout.String(), "stale") {
+		t.Errorf("stdout = %q, want it to warn that prior evidence is stale", stdout.String())
+	}
+}
+
+func TestRecordEvidence_NoWarningWhenValidityHashUnchanged(t *testing.T) {
+	db := openCheckTestStore(t)
+	h := cjtr.Hypothesis{Name: "fresh check", ID: "fresh-check"}
+	hypothesisID := "demo-area::demo::some-rule::fresh-check"
+
+	if _, err := evidenceledger.Append(db, evidenceledger.Evidence{
+		HypothesisID: hypothesisID, Stage: evidenceledger.Thesis,
+		ValidityHash: evidenceledger.ValidityHash("same-spec-version", "image", version.String(), "", ""),
+	}); err != nil {
+		t.Fatalf("Append returned unexpected error: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "same-spec-version", 0, false, &stdout)
+
+	if strings.Contains(stdout.String(), "stale") {
+		t.Errorf("stdout = %q, should not warn about staleness when the validity hash is unchanged", stdout.String())
 	}
 }
 
