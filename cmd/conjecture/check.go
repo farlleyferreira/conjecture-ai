@@ -11,6 +11,7 @@ import (
 
 	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
 	"github.com/farlleyferreira/conjecture-ai/internal/conformancecycle"
+	"github.com/farlleyferreira/conjecture-ai/internal/contextengine"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/omissiondetection"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
@@ -241,7 +242,7 @@ func checkHypothesisConformance(
 		_, _ = fmt.Fprintf(stdout, "%s: %s:   counterexample: %v\n", compositeID, h.Name, counterexample.Value)
 	}
 
-	recordEvidence(db, compositeID, h, cvVerdict, counterexample, image, specVersion, isLaw, stdout)
+	recordEvidence(db, compositeID, h, cvVerdict, counterexample, image, specVersion, len(cases), isLaw, stdout)
 
 	return cvVerdict == conformancecycle.NonConformant
 }
@@ -278,14 +279,39 @@ func checkHypothesisConformance(
 // whatever its most recent evidence record left it at (via
 // [evidenceledger.Demote]), with the counterexample that caused it
 // recorded alongside. A Conformant or Inconclusive verdict carries the
-// stage forward unchanged - promoting it upward needs the weight-
-// dependent accumulated-case-count machinery
+// stage forward unchanged for a plain hypothesis - promoting it
+// upward needs the weight-dependent accumulated-case-count machinery
 // ([evidenceledger.Weight.MeetsPromotionThreshold]), which this
-// codebase cannot apply yet: nothing in the .cjtr grammar lets a
-// hypothesis declare its own risk weight, so there is no weight to
-// look the threshold up by. That is a separate, disclosed gap, not
-// something guessed at here.
-func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict conformancecycle.Verdict, counterexample *conformancecycle.Counterexample, image, specVersion string, isLaw bool, stdout io.Writer) {
+// codebase still cannot apply to a plain hypothesis: nothing in the
+// .cjtr grammar lets one declare its own risk weight, so there is no
+// weight to look the threshold up by. That remains a separate,
+// disclosed gap, not something guessed at here.
+//
+// A law is different: [contextengine.GatedWeight]'s own
+// "isUserDefinedLaw's rule wins outright" makes every law's weight
+// [evidenceledger.Critical], regardless of any other signal - a real,
+// already-grounded weight this package can use. So, when isLaw is
+// true and the verdict is Conformant at Hypothesis stage, caseCount
+// (the number of directed-sampling cases this run actually exercised,
+// supplied by the caller - see check.go's/implement.go's own "cases"
+// variable, or 1 per externally-reported passing result in
+// results.go) is added to a running failure-free-case total
+// ([userdefinedlaws.AddFailureFreeCases]), and the law is promoted to
+// Thesis ("Hypothesis promoted to Thesis... found conformant by the
+// conformance cycle with repeatable results") the moment that total
+// meets critical weight's own required-case count
+// (MeetsPromotionThreshold). "Repeatable results" is read here as this
+// running total itself: it only grows across repeated Conformant runs
+// of the same law, and a NonConformant verdict resets it back to zero
+// ([userdefinedlaws.ResetFailureFreeCases]) at the same time it
+// demotes the stage - a single counterexample undoes the "repeatable"
+// claim the same way it undoes everything else. This still never
+// promotes past Thesis: Thesis-to-Theory and Theory-to-Law each need
+// their own distinct, unbuilt criteria (phenomenon-level confirmation
+// and swarm robustness; hidden-sample testing across code versions),
+// so this only ever fires the one promotion edge gated purely by case
+// count.
+func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict conformancecycle.Verdict, counterexample *conformancecycle.Counterexample, image, specVersion string, caseCount int, isLaw bool, stdout io.Writer) {
 	if h.ID == "" {
 		_, _ = fmt.Fprintf(stdout, "%s: %s: no declared \"id\", evidence not recorded\n", compositeID, h.Name)
 		return
@@ -342,8 +368,36 @@ func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict c
 		case conformancecycle.Conformant:
 			if err := userdefinedlaws.SetStatus(db, hypothesisID, userdefinedlaws.Conformant); err != nil {
 				_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR recording law status: %v\n", compositeID, h.Name, err)
+				break
+			}
+			lawWeight, err := contextengine.GatedWeight(evidenceledger.Low, true, nil)
+			if err != nil {
+				_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR computing law weight: %v\n", compositeID, h.Name, err)
+				break
+			}
+			total, err := userdefinedlaws.AddFailureFreeCases(db, hypothesisID, caseCount)
+			if err != nil {
+				_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR recording failure-free cases: %v\n", compositeID, h.Name, err)
+				break
+			}
+			if stage == evidenceledger.Hypothesis && lawWeight.MeetsPromotionThreshold(total) {
+				promotion := evidenceledger.Evidence{
+					HypothesisID: hypothesisID,
+					Stage:        evidenceledger.Thesis,
+					ProducedBy:   evidence.ProducedBy,
+					Survived:     fmt.Sprintf("promoted to Thesis: %d failure-free cases at critical weight met the required %d", total, lawWeight.RequiredCases()),
+					ValidityHash: evidence.ValidityHash,
+				}
+				if _, err := evidenceledger.Append(db, promotion); err != nil {
+					_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR recording promotion: %v\n", compositeID, h.Name, err)
+				} else {
+					_, _ = fmt.Fprintf(stdout, "%s: %s: promoted to Thesis\n", compositeID, h.Name)
+				}
 			}
 		case conformancecycle.NonConformant:
+			if err := userdefinedlaws.ResetFailureFreeCases(db, hypothesisID); err != nil {
+				_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR resetting failure-free cases: %v\n", compositeID, h.Name, err)
+			}
 			count, err := userdefinedlaws.RecordCounterevidence(db, hypothesisID)
 			if err != nil {
 				_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR recording counterevidence: %v\n", compositeID, h.Name, err)

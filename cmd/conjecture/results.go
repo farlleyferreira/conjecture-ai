@@ -233,7 +233,10 @@ func recordResultOutcome(db *sql.DB, h cjtr.Hypothesis, compositeID, specVersion
 	}
 	_, _ = fmt.Fprintf(stdout, "%s: %s: result: %s\n", compositeID, h.Name, outcome.verdict)
 
-	recordEvidence(db, compositeID, h, outcome.verdict, counterexample, resultsPath, specVersion, isLaw, stdout)
+	// One externally-reported result is one observed case - the most
+	// literal mapping available here, see recordEvidence's own doc
+	// comment on caseCount.
+	recordEvidence(db, compositeID, h, outcome.verdict, counterexample, resultsPath, specVersion, 1, isLaw, stdout)
 
 	return outcome.verdict == conformancecycle.NonConformant
 }
