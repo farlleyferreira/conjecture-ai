@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
 	"github.com/farlleyferreira/conjecture-ai/internal/conformancecycle"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/sandbox"
@@ -180,6 +181,41 @@ func TestRunImplementLoop_SucceedsWithinBudgetAndRecordsEvidence(t *testing.T) {
 	}
 	if len(history) != 1 {
 		t.Fatalf("len(history) = %d, want 1", len(history))
+	}
+}
+
+func TestRunImplementLoop_NoBoundedInputIsTypeAOmission(t *testing.T) {
+	concepts := map[string]cjtr.Concept{
+		"input value": {Name: "input value", Kind: cjtr.VariableConcept, Variable: "input.x", Type: "decimal"},
+		"result":      {Name: "result", Kind: cjtr.VariableConcept, Variable: "output.result", Type: "decimal"},
+	}
+	then, err := cjtr.ParseComparison("the result is 7.50", concepts)
+	if err != nil {
+		t.Fatalf("ParseComparison returned unexpected error: %v", err)
+	}
+	h := cjtr.Hypothesis{
+		Name: "no bounded input", ID: "no-bounded-input", IsUniversal: true, Then: then,
+		Examples: []map[string]string{{"input value": "1", "result": "7.50"}},
+	}
+	rule := cjtr.Rule{ID: "result-rule", CompositeID: "demo-area::demo::result-rule"}
+
+	db := openCheckTestStore(t)
+	client := &fakeImplementerClient{}
+	sb := &sandbox.Sandbox{DockerBinary: fakeImplementPath}
+
+	var stdout bytes.Buffer
+	verdict, err := runImplementLoop(context.Background(), db, sb, client, rule, h, 3, "test-spec-version", concepts, nil, &stdout)
+	if err != nil {
+		t.Fatalf("runImplementLoop returned unexpected error: %v", err)
+	}
+	if verdict != conformancecycle.Inconclusive {
+		t.Errorf("verdict = %v, want Inconclusive", verdict)
+	}
+	if !strings.Contains(stdout.String(), "TYPE A OMISSION") {
+		t.Errorf("stdout = %q, want it to report a Type A omission", stdout.String())
+	}
+	if len(client.prompts) != 0 {
+		t.Errorf("len(client.prompts) = %d, want 0 (the implementer should never be asked for code with nothing to test it against)", len(client.prompts))
 	}
 }
 

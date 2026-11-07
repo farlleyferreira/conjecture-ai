@@ -239,7 +239,7 @@ func TestCheckHypothesisConformance_UnfalsifiableIsRejectedWithoutRunningConform
 	}
 }
 
-func TestCheckHypothesisConformance_NoExamplesSkipsConformanceWithoutFailing(t *testing.T) {
+func TestCheckHypothesisConformance_NoExamplesIsTypeAOmission(t *testing.T) {
 	concepts := map[string]cjtr.Concept{
 		"shipping fee": {Name: "shipping fee", Kind: cjtr.VariableConcept, Variable: "output.shipping_fee", Type: "decimal"},
 	}
@@ -251,12 +251,55 @@ func TestCheckHypothesisConformance_NoExamplesSkipsConformanceWithoutFailing(t *
 	db := openCheckTestStore(t)
 	sb := &sandbox.Sandbox{DockerBinary: fakeImplPath}
 
+	var stdout bytes.Buffer
 	failed := checkHypothesisConformance(
 		context.Background(), db, sb, "unused", []string{"WRITE", `{}`},
-		h, "demo-area::demo::some-rule", "test-spec-version", concepts, nil, &bytes.Buffer{},
+		h, "demo-area::demo::some-rule", "test-spec-version", concepts, nil, &stdout,
 	)
 	if failed {
 		t.Error("checkHypothesisConformance with no examples = true, want false (nothing to fail on)")
+	}
+	if !strings.Contains(stdout.String(), "TYPE A OMISSION") {
+		t.Errorf("stdout = %q, want it to report a Type A omission", stdout.String())
+	}
+
+	history, err := evidenceledger.History(db, "demo-area::demo::some-rule::no-examples")
+	if err != nil {
+		t.Fatalf("History returned unexpected error: %v", err)
+	}
+	if len(history) != 0 {
+		t.Errorf("len(history) = %d, want 0 (nothing was actually tested, so nothing is recorded as conformant)", len(history))
+	}
+}
+
+func TestCheckHypothesisConformance_ExamplesButNoBoundedInputIsTypeAOmission(t *testing.T) {
+	// Has a worked example, unlike the no-examples case above, but no
+	// input-variable concept declares a range or one_of - so
+	// DirectedSamplingInputs still generates zero cases.
+	concepts := map[string]cjtr.Concept{
+		"shipping fee": {Name: "shipping fee", Kind: cjtr.VariableConcept, Variable: "output.shipping_fee", Type: "decimal"},
+	}
+	then, err := cjtr.ParseComparison("the shipping fee is at least 0.00", concepts)
+	if err != nil {
+		t.Fatalf("ParseComparison returned unexpected error: %v", err)
+	}
+	h := cjtr.Hypothesis{
+		Name: "no bounded input", ID: "no-bounded-input", IsUniversal: true, Then: then,
+		Examples: []map[string]string{{"shipping fee": "7.50"}},
+	}
+	db := openCheckTestStore(t)
+	sb := &sandbox.Sandbox{DockerBinary: fakeImplPath}
+
+	var stdout bytes.Buffer
+	failed := checkHypothesisConformance(
+		context.Background(), db, sb, "unused", []string{"WRITE", `{}`},
+		h, "demo-area::demo::some-rule", "test-spec-version", concepts, nil, &stdout,
+	)
+	if failed {
+		t.Error("checkHypothesisConformance with no bounded input = true, want false")
+	}
+	if !strings.Contains(stdout.String(), "TYPE A OMISSION") {
+		t.Errorf("stdout = %q, want it to report a Type A omission", stdout.String())
 	}
 }
 

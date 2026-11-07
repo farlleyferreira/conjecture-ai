@@ -16,6 +16,7 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/conformancecycle"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/llmclient"
+	"github.com/farlleyferreira/conjecture-ai/internal/omissiondetection"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/sandbox"
 )
@@ -180,6 +181,25 @@ func runImplementLoop(
 	tables cjtr.Tables,
 	stdout io.Writer,
 ) (conformancecycle.Verdict, error) {
+	// omission-detection's "Type A - asserted but not implemented":
+	// checked once, up front - cases do not depend on any round's own
+	// generated code, only on h/concepts - since asking an implementer
+	// to revise code against a hypothesis no case will ever exercise
+	// would spend rounds (and, eventually, tokens) on something that
+	// can never be demonstrated conformant either way.
+	var cases []cjtr.Bindings
+	if len(h.Examples) > 0 {
+		var err error
+		cases, err = conformancecycle.DirectedSamplingInputs(h, concepts)
+		if err != nil {
+			return 0, err
+		}
+	}
+	if _, omitted := omissiondetection.CheckTypeA(rule.CompositeID+"::"+h.ID, len(cases)); omitted {
+		_, _ = fmt.Fprintf(stdout, "TYPE A OMISSION: %s has no worked example or no input concept with a declared domain to sample - nothing to implement against\n", h.Name)
+		return conformancecycle.Inconclusive, nil
+	}
+
 	budget := conformancecycle.Budget{MaxRounds: maxRounds, MaxTokens: math.MaxInt}
 
 	dir, err := os.MkdirTemp("", "conjecture-implement")
