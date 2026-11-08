@@ -2,21 +2,28 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
+	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // connectMCPTestClient connects a real client to a fresh server over
 // an in-memory transport pair, so a test can call a tool through the
-// actual MCP protocol machinery without a real stdio subprocess.
-func connectMCPTestClient(t *testing.T) *mcp.ClientSession {
+// actual MCP protocol machinery without a real stdio subprocess. The
+// returned db is the server's own "read_evidence" store - a fresh
+// temporary one (openCheckTestStore), never the real per-OS one
+// [persistence.OpenStore] would otherwise open - so a test can seed it
+// directly with [evidenceledger.Append].
+func connectMCPTestClient(t *testing.T) (*mcp.ClientSession, *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
 
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
-	server := newMCPServer()
+	db := openCheckTestStore(t)
+	server := newMCPServer(db)
 	if _, err := server.Connect(ctx, serverTransport, nil); err != nil {
 		t.Fatalf("server.Connect returned unexpected error: %v", err)
 	}
@@ -27,12 +34,12 @@ func connectMCPTestClient(t *testing.T) *mcp.ClientSession {
 		t.Fatalf("client.Connect returned unexpected error: %v", err)
 	}
 	t.Cleanup(func() { _ = session.Close() })
-	return session
+	return session, db
 }
 
 func TestMCPVerifyTool_ConsistentFilePasses(t *testing.T) {
 	path := writeFixture(t, fixtureCjtr)
-	session := connectMCPTestClient(t)
+	session, _ := connectMCPTestClient(t)
 
 	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Name:      "verify",
@@ -55,7 +62,7 @@ func TestMCPVerifyTool_ConsistentFilePasses(t *testing.T) {
 }
 
 func TestMCPVerifyTool_MissingFileReportsFailure(t *testing.T) {
-	session := connectMCPTestClient(t)
+	session, _ := connectMCPTestClient(t)
 
 	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
 		Name:      "verify",
@@ -78,7 +85,7 @@ func TestMCPVerifyTool_MissingFileReportsFailure(t *testing.T) {
 }
 
 func TestMCPServer_VerifyToolIsRegistered(t *testing.T) {
-	session := connectMCPTestClient(t)
+	session, _ := connectMCPTestClient(t)
 
 	res, err := session.ListTools(context.Background(), nil)
 	if err != nil {
@@ -90,4 +97,86 @@ func TestMCPServer_VerifyToolIsRegistered(t *testing.T) {
 		}
 	}
 	t.Errorf("ListTools = %+v, want a \"verify\" tool", res.Tools)
+}
+
+func TestMCPServer_ReadEvidenceToolIsRegistered(t *testing.T) {
+	session, _ := connectMCPTestClient(t)
+
+	res, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools returned unexpected error: %v", err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name == "read_evidence" {
+			return
+		}
+	}
+	t.Errorf("ListTools = %+v, want a \"read_evidence\" tool", res.Tools)
+}
+
+func TestMCPReadEvidenceTool_NoRecordedEvidenceIsEmptyHistory(t *testing.T) {
+	session, _ := connectMCPTestClient(t)
+
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "read_evidence",
+		Arguments: map[string]any{"hypothesis_id": "demo-area::demo::some-rule::never-checked"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("CallTool result IsError = true, content: %+v", res.Content)
+	}
+
+	out, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want map[string]any: %+v", res.StructuredContent, res.StructuredContent)
+	}
+	history, _ := out["history"].([]any)
+	if len(history) != 0 {
+		t.Errorf("history = %+v, want empty for a hypothesis with no recorded evidence", history)
+	}
+}
+
+func TestMCPReadEvidenceTool_ReturnsRecordedHistory(t *testing.T) {
+	session, db := connectMCPTestClient(t)
+	hypothesisID := "demo-area::demo::some-rule::seeded"
+
+	if _, err := evidenceledger.Append(db, evidenceledger.Evidence{
+		HypothesisID: hypothesisID, Stage: evidenceledger.Hypothesis,
+		ProducedBy: "conjecture check test", Attacked: "directed sampling",
+		Survived: "every generated case conformed", ValidityHash: []byte("x"),
+	}); err != nil {
+		t.Fatalf("Append returned unexpected error: %v", err)
+	}
+
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "read_evidence",
+		Arguments: map[string]any{"hypothesis_id": hypothesisID},
+	})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("CallTool result IsError = true, content: %+v", res.Content)
+	}
+
+	out, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want map[string]any: %+v", res.StructuredContent, res.StructuredContent)
+	}
+	history, ok := out["history"].([]any)
+	if !ok || len(history) != 1 {
+		t.Fatalf("history = %+v, want exactly one record", out["history"])
+	}
+	record, ok := history[0].(map[string]any)
+	if !ok {
+		t.Fatalf("history[0] = %T, want map[string]any", history[0])
+	}
+	if record["attacked"] != "directed sampling" {
+		t.Errorf("record[\"attacked\"] = %v, want %q", record["attacked"], "directed sampling")
+	}
+	if record["stage"] != evidenceledger.Hypothesis.String() {
+		t.Errorf("record[\"stage\"] = %v, want %q", record["stage"], evidenceledger.Hypothesis.String())
+	}
 }
