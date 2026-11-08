@@ -111,6 +111,79 @@ func TestRunVerify_ConsistentExamples(t *testing.T) {
 	}
 }
 
+func TestRunVerify_TypeDOmissionReportedForUnaddressedCategory(t *testing.T) {
+	path := writeFixture(t, fixtureCjtr)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path, "--catalog", "concurrency,accessibility", "--addressed", "accessibility"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("runVerify exit code = %d, want 0 (a Type D omission is reported, not a failure); stderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `TYPE D OMISSION: category "concurrency"`) {
+		t.Errorf("stdout should report the unaddressed \"concurrency\" category, got:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), `category "accessibility"`) {
+		t.Errorf("stdout should not report \"accessibility\" as omitted (it was declared addressed), got:\n%s", stdout.String())
+	}
+}
+
+func TestRunVerify_NoTypeDOmissionWhenEveryCategoryAddressed(t *testing.T) {
+	path := writeFixture(t, fixtureCjtr)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path, "--catalog", "concurrency", "--addressed", "concurrency"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("runVerify exit code = %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "TYPE D OMISSION") {
+		t.Errorf("stdout should not report any Type D omission, got:\n%s", stdout.String())
+	}
+}
+
+func TestRunVerify_NoCatalogSkipsTypeDCheckEntirely(t *testing.T) {
+	path := writeFixture(t, fixtureCjtr)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("runVerify exit code = %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "TYPE D") {
+		t.Errorf("stdout should not mention Type D at all when no --catalog is given, got:\n%s", stdout.String())
+	}
+}
+
+func TestRunVerify_AddressedWithoutCatalogIsUsageError(t *testing.T) {
+	path := writeFixture(t, fixtureCjtr)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path, "--addressed", "concurrency"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("runVerify with --addressed but no --catalog: exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "usage:") {
+		t.Errorf("stderr should contain a usage message, got %q", stderr.String())
+	}
+}
+
+func TestRunVerify_CatalogFlagMissingValueIsUsageError(t *testing.T) {
+	path := writeFixture(t, fixtureCjtr)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path, "--catalog"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("runVerify with a valueless --catalog: exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "usage:") {
+		t.Errorf("stderr should contain a usage message, got %q", stderr.String())
+	}
+}
+
 func TestRunVerify_ConfirmedFileHasNoNotice(t *testing.T) {
 	signed := signContent(t, []byte(fixtureCjtr), true)
 	path := writeFixture(t, string(signed))
