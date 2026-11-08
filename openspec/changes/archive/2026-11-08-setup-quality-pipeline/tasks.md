@@ -32,5 +32,5 @@
 - [x] 4.1 Initialize OpenSpec in the repo (`openspec init`)
 - [x] 4.2 Write this proposal/design/tasks set documenting the pipeline
       decisions
-- [ ] 4.3 Archive this change once merged, so it becomes permanent history
+- [x] 4.3 Archive this change once merged, so it becomes permanent history
       under `openspec/changes/archive/`
