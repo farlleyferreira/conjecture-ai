@@ -53,6 +53,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runQueue(args[1:], stdout, stderr)
 	case "mcp":
 		return runMCP(args[1:], stdout, stderr)
+	case "work":
+		return runWork(args[1:], stdout, stderr)
 	case "results":
 		return runResults(args[1:], stdout, stderr)
 	default:

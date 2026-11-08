@@ -338,7 +338,24 @@ func sortedConceptNames(concepts map[string]cjtr.Concept) []string {
 // recordEvidence's own compositeID::id scoping) and whether it was
 // declared as a law rather than a plain hypothesis (so the caller can
 // thread that through to recordEvidence's own isLaw parameter).
+//
+// An empty ruleID means a file-level law - "user_defined_laws" at a
+// file's top level, sibling to "rules" (see [cjtr.UserDefinedLaws]'s
+// own doc comment) - searched in f.fileLaws instead of any rule's own
+// body, with f.phenomenonID standing in for a rule's own CompositeID
+// (runVerify's and runCheck's own convention for this same case).
+// runWork (work.go) is this path's only caller: it is reachable only
+// from a work-queue item's own id, never from "conjecture implement"'s
+// CLI arguments directly, which always supply a real rule id.
 func findHypothesis(f loadedFicha, ruleID, hypothesisID string) (cjtr.Rule, cjtr.Hypothesis, bool, error) {
+	if ruleID == "" {
+		for _, h := range f.fileLaws {
+			if h.ID == hypothesisID {
+				return cjtr.Rule{CompositeID: f.phenomenonID}, h, true, nil
+			}
+		}
+		return cjtr.Rule{}, cjtr.Hypothesis{}, false, fmt.Errorf("no file-level law with id %q", hypothesisID)
+	}
 	for _, rule := range f.rules {
 		if rule.ID != ruleID {
 			continue
