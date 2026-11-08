@@ -235,8 +235,13 @@ func recordResultOutcome(db *sql.DB, h cjtr.Hypothesis, compositeID, specVersion
 
 	// One externally-reported result is one observed case - the most
 	// literal mapping available here, see recordEvidence's own doc
-	// comment on caseCount.
-	recordEvidence(db, compositeID, h, outcome.verdict, counterexample, resultsPath, specVersion, 1, isLaw, stdout)
+	// comment on caseCount. This path never actually runs any of
+	// conformancecycle's three rigor levels - it maps an externally-
+	// reported test result instead - so it passes DirectedSampling
+	// unconditionally, exactly the label this call always used before
+	// recordEvidence could name any other level (see recordEvidence's
+	// own doc comment on the level parameter).
+	recordEvidence(db, compositeID, h, conformancecycle.DirectedSampling, outcome.verdict, counterexample, resultsPath, specVersion, 1, isLaw, stdout)
 
 	return outcome.verdict == conformancecycle.NonConformant
 }

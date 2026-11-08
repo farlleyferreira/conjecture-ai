@@ -174,7 +174,7 @@ func runImplement(args []string, stdout, stderr io.Writer) int {
 // implementer for code (the first round from scratch, every later
 // round revising the previous attempt against the counterexample the
 // last round found), runs it for real via
-// [conformancecycle.CheckHypothesisDirectedSampling], and stops at the
+// [conformancecycle.CheckHypothesisWithSelectedRigor], and stops at the
 // first Conformant result, an Inconclusive one (nothing to revise
 // against), or when maxRounds is reached - "Round and token limits":
 // "the cycle stops and reports the outcome as not conformant rather
@@ -232,6 +232,8 @@ func runImplementLoop(
 	var previousCode string
 	var previousCounterexample *conformancecycle.Counterexample
 	var verdict conformancecycle.Verdict
+	var level conformancecycle.RigorLevel
+	var levelCaseCount int
 	exhausted := true
 
 	for round := 0; !budget.Exhausted(round, 0); round++ {
@@ -248,11 +250,11 @@ func runImplementLoop(
 		previousCode = code
 
 		var counterexample *conformancecycle.Counterexample
-		verdict, counterexample, err = conformancecycle.CheckHypothesisDirectedSampling(ctx, sb, opts, h, concepts, tables)
+		level, verdict, counterexample, levelCaseCount, err = conformancecycle.CheckHypothesisWithSelectedRigor(ctx, sb, opts, h, concepts, tables, isLaw)
 		if err != nil {
 			return 0, fmt.Errorf("round %d: running conformance check: %w", round, err)
 		}
-		_, _ = fmt.Fprintf(stdout, "round %d: %s\n", round, verdict)
+		_, _ = fmt.Fprintf(stdout, "round %d (%s): %s\n", round, level, verdict)
 
 		if verdict == conformancecycle.Conformant || verdict == conformancecycle.Inconclusive {
 			exhausted = false
@@ -274,7 +276,7 @@ func runImplementLoop(
 		verdict = conformancecycle.VerdictOnBudgetExhausted
 	}
 
-	recordEvidence(db, rule.CompositeID, h, verdict, previousCounterexample, implementImage, specVersion, len(cases), isLaw, stdout)
+	recordEvidence(db, rule.CompositeID, h, level, verdict, previousCounterexample, implementImage, specVersion, levelCaseCount, isLaw, stdout)
 	return verdict, nil
 }
 

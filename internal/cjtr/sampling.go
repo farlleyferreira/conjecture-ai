@@ -66,6 +66,71 @@ func BoundaryValues(c Concept) ([]string, error) {
 	return values, nil
 }
 
+// ExhaustiveValues returns every value of c's own declared domain, when
+// that domain is finite - conformance-cycle's "bounded proof"/"complete
+// proof" rigor levels' own input: full coverage of a concept's domain,
+// not [BoundaryValues]'s own sample of its edges.
+//
+// A "one_of" concept is already finite: every declared value is
+// returned. A "range" concept is only finite when it also declares
+// "places" - together they give an exact step count
+// ((Max-Min)/10^-Places + 1) the specification author already committed
+// to; a range without "places" has no declared step, so there is no
+// grounded way to enumerate it without inventing a precision the
+// specification never gave this concept, and found is false. A concept
+// declaring neither is likewise not boundable.
+//
+// maxCount caps how many values this function will ever actually
+// enumerate: a wide range at a fine precision could still mean millions
+// of values, which this package will not silently produce - exceeding
+// maxCount reports found=false, the same as a genuinely unbounded
+// domain, rather than a value this caller did not ask for.
+func ExhaustiveValues(c Concept, maxCount int) (values []string, found bool, err error) {
+	if len(c.OneOf) > 0 {
+		if len(c.OneOf) > maxCount {
+			return nil, false, nil
+		}
+		return append([]string(nil), c.OneOf...), true, nil
+	}
+
+	if !c.HasRange || !c.HasPlaces {
+		return nil, false, nil
+	}
+
+	min, err := parseExactDecimal(c.Min)
+	if err != nil {
+		return nil, false, fmt.Errorf("cjtr: concept %q: range.min: %w", c.Name, err)
+	}
+	max, err := parseExactDecimal(c.Max)
+	if err != nil {
+		return nil, false, fmt.Errorf("cjtr: concept %q: range.max: %w", c.Name, err)
+	}
+	step := unitStep(c.Places)
+
+	span := new(big.Rat).Sub(max, min)
+	if span.Sign() < 0 {
+		return nil, false, fmt.Errorf("cjtr: concept %q: range.min is greater than range.max", c.Name)
+	}
+	countRat := new(big.Rat).Quo(span, step)
+	if !countRat.IsInt() {
+		return nil, false, fmt.Errorf("cjtr: concept %q: range is not an exact multiple of its own declared precision", c.Name)
+	}
+	// +1: both endpoints are inclusive.
+	countPlusOne := new(big.Int).Add(countRat.Num(), big.NewInt(1))
+	if !countPlusOne.IsInt64() || countPlusOne.Int64() > int64(maxCount) {
+		return nil, false, nil
+	}
+	count := countPlusOne.Int64()
+
+	values = make([]string, 0, count)
+	v := new(big.Rat).Set(min)
+	for i := int64(0); i < count; i++ {
+		values = append(values, formatDecimal(v, c.Places))
+		v = new(big.Rat).Add(v, step)
+	}
+	return values, true, nil
+}
+
 // unitStep returns 10^-places as an exact rational, e.g. places=2 gives
 // 1/100 (0.01) - the smallest value a decimal concept declaring that
 // many "places" can represent.

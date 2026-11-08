@@ -38,8 +38,9 @@ const lawContestedThreshold = 3
 // spec-judge, conformance-cycle, and evidence-ledger together into one
 // real loop: for every hypothesis and user-defined law in file, it
 // judges falsifiability (spec-judge's own Finding/Judge), and - only
-// for an Accepted verdict - runs a real directed-sampling conformance
-// check (conformancecycle.CheckHypothesisDirectedSampling) against
+// for an Accepted verdict - runs a real conformance check at the
+// strongest rigor level it actually qualifies for
+// (conformancecycle.CheckHypothesisWithSelectedRigor) against
 // implementation code running in image via command, recording one
 // evidence-ledger record per judged hypothesis that declares an "id".
 //
@@ -52,9 +53,9 @@ const lawContestedThreshold = 3
 // to [sandbox.Options]'s own shape (Image, Command) since that is what
 // it is actually configuring.
 //
-// Honesty note: this still only runs one round of one rigor level
-// (directed sampling) against one already-written implementation. It
-// does not implement the outer judge-to-implementer round loop
+// Honesty note: this still only runs one round of the selected rigor
+// level against one already-written implementation. It does not
+// implement the outer judge-to-implementer round loop
 // ("Round and token limits") where a failing round would feed its
 // counterexample back to an LLM that revises the implementation - that
 // needs its own design (a target-language decision, a new LLM prompt/
@@ -232,17 +233,17 @@ func checkHypothesisConformance(
 	defer func() { _ = os.RemoveAll(dir) }()
 	opts := sandbox.Options{Image: image, Dir: dir, Command: command}
 
-	cvVerdict, counterexample, err := conformancecycle.CheckHypothesisDirectedSampling(ctx, sb, opts, h, concepts, tables)
+	level, cvVerdict, counterexample, caseCount, err := conformancecycle.CheckHypothesisWithSelectedRigor(ctx, sb, opts, h, concepts, tables, isLaw)
 	if err != nil {
 		_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR running conformance check: %v\n", compositeID, h.Name, err)
 		return true
 	}
-	_, _ = fmt.Fprintf(stdout, "%s: %s: conformance: %s\n", compositeID, h.Name, cvVerdict)
+	_, _ = fmt.Fprintf(stdout, "%s: %s: conformance (%s): %s\n", compositeID, h.Name, level, cvVerdict)
 	if counterexample != nil {
 		_, _ = fmt.Fprintf(stdout, "%s: %s:   counterexample: %v\n", compositeID, h.Name, counterexample.Value)
 	}
 
-	recordEvidence(db, compositeID, h, cvVerdict, counterexample, image, specVersion, len(cases), isLaw, stdout)
+	recordEvidence(db, compositeID, h, level, cvVerdict, counterexample, image, specVersion, caseCount, isLaw, stdout)
 
 	return cvVerdict == conformancecycle.NonConformant
 }
@@ -292,10 +293,10 @@ func checkHypothesisConformance(
 // [evidenceledger.Critical], regardless of any other signal - a real,
 // already-grounded weight this package can use. So, when isLaw is
 // true and the verdict is Conformant at Hypothesis stage, caseCount
-// (the number of directed-sampling cases this run actually exercised,
-// supplied by the caller - see check.go's/implement.go's own "cases"
-// variable, or 1 per externally-reported passing result in
-// results.go) is added to a running failure-free-case total
+// (the number of cases the selected rigor level actually exercised,
+// supplied by the caller - see check.go's/implement.go's own
+// CheckHypothesisWithSelectedRigor call, or 1 per externally-reported
+// passing result in results.go) is added to a running failure-free-case total
 // ([userdefinedlaws.AddFailureFreeCases]), and the law is promoted to
 // Thesis ("Hypothesis promoted to Thesis... found conformant by the
 // conformance cycle with repeatable results") the moment that total
@@ -319,7 +320,37 @@ func checkHypothesisConformance(
 // still carries forward as recorded (the specification says flagged,
 // not discarded or reset), so this is a visibility fix, not a
 // behavior change to anything else this function does.
-func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict conformancecycle.Verdict, counterexample *conformancecycle.Counterexample, image, specVersion string, caseCount int, isLaw bool, stdout io.Writer) {
+//
+// level names which rigor level actually produced verdict - recorded
+// in evidence.Attacked/evidence.Open instead of the hardcoded
+// "directed sampling" text this function used before bounded and
+// complete proof existed (conformance-cycle-rigor-levels' design
+// decision 6). results.go, whose own path never runs any of
+// conformancecycle's three rigor levels (it maps an externally-
+// reported test result instead), keeps passing
+// [conformancecycle.DirectedSampling] here exactly as before - this
+// is unrelated to its own, separately disclosed gap, not fixed by
+// this parameter.
+// unrunRigorLevelsNote is [recordEvidence]'s own disclosure of which
+// of the three rigor levels did not produce level's own verdict -
+// honest about why, not just that, matching
+// [conformancecycle.CheckHypothesisWithSelectedRigor]'s own fallback
+// order (complete proof, then bounded proof, then directed sampling).
+func unrunRigorLevelsNote(level conformancecycle.RigorLevel, isLaw bool) string {
+	switch level {
+	case conformancecycle.CompleteProof:
+		return ""
+	case conformancecycle.BoundedProof:
+		return "complete proof not run: not every input concept has a boundable domain within this package's disclosed cap"
+	default: // conformancecycle.DirectedSampling
+		if !isLaw {
+			return "bounded proof and complete proof rigor levels not run: a plain hypothesis has no declared weight to select them by"
+		}
+		return "bounded proof and complete proof rigor levels not run: no input concept has a boundable domain within this package's disclosed cap"
+	}
+}
+
+func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, level conformancecycle.RigorLevel, verdict conformancecycle.Verdict, counterexample *conformancecycle.Counterexample, image, specVersion string, caseCount int, isLaw bool, stdout io.Writer) {
 	if h.ID == "" {
 		_, _ = fmt.Fprintf(stdout, "%s: %s: no declared \"id\", evidence not recorded\n", compositeID, h.Name)
 		return
@@ -360,20 +391,20 @@ func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, verdict c
 		HypothesisID: hypothesisID,
 		Stage:        stage,
 		ProducedBy:   "conjecture check " + version.String(),
-		Unchecked:    "bounded proof and complete proof rigor levels not run",
+		Unchecked:    unrunRigorLevelsNote(level, isLaw),
 		ValidityHash: currentValidityHash,
 	}
 	switch verdict {
 	case conformancecycle.Conformant:
-		evidence.Attacked = "directed sampling"
-		evidence.Survived = "every generated boundary case conformed"
+		evidence.Attacked = level.String()
+		evidence.Survived = "every generated case conformed"
 	case conformancecycle.NonConformant:
-		evidence.Attacked = "directed sampling"
+		evidence.Attacked = level.String()
 		if counterexample != nil {
 			evidence.Attacked += fmt.Sprintf("; found counterexample: %v", counterexample.Value)
 		}
 	case conformancecycle.Inconclusive:
-		evidence.Open = "directed sampling: at least one round timed out with no definitive violation found"
+		evidence.Open = level.String() + ": at least one round timed out with no definitive violation found"
 	}
 
 	if _, err := evidenceledger.Append(db, evidence); err != nil {
