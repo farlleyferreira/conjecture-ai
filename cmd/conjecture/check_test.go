@@ -37,7 +37,12 @@ import (
 // testdata/fakez3 fixture, used only by consistency_test.go - the
 // same real "z3" stand-in that package's own tests use, reused here
 // rather than maintaining an independent copy of it.
-var fakeImplPath, fakeImplementPath, fakeZ3Path string
+//
+// fakeRigorPath is this package's own testdata/fakerigor fixture, used
+// only by rigorlevels_integration_test.go - see its own doc comment
+// for why it needs a real, input-dependent implementation rather than
+// fakeImplPath's fixed canned output.
+var fakeImplPath, fakeImplementPath, fakeZ3Path, fakeRigorPath string
 
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "checktest-fakeimpl")
@@ -54,6 +59,7 @@ func TestMain(m *testing.M) {
 	fakeImplPath = filepath.Join(dir, "fakeimpl"+exeSuffix)
 	fakeImplementPath = filepath.Join(dir, "fakeimplement"+exeSuffix)
 	fakeZ3Path = filepath.Join(dir, "fakez3"+exeSuffix)
+	fakeRigorPath = filepath.Join(dir, "fakerigor"+exeSuffix)
 
 	// Located via PATH, not runtime.GOROOT() (deprecated since Go
 	// 1.24 - its own value reflects where this test binary was
@@ -71,6 +77,7 @@ func TestMain(m *testing.M) {
 		{fakeImplPath, "../../internal/conformancecycle/testdata/fakeimpl"},
 		{fakeImplementPath, "./testdata/fakeimplement"},
 		{fakeZ3Path, "../../internal/expressioncore/testdata/fakez3"},
+		{fakeRigorPath, "./testdata/fakerigor"},
 	} {
 		buildCmd := exec.Command(goBin, "build", "-o", build.out, build.pkg)
 		if out, err := buildCmd.CombinedOutput(); err != nil {
