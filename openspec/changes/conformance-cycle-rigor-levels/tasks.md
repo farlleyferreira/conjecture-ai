@@ -2,20 +2,20 @@
 
 ## 1. Exhaustive domain enumeration
 
-- [ ] 1.1 `cjtr.ExhaustiveValues`: finite `one_of` list, or a decimal range
+- [x] 1.1 `cjtr.ExhaustiveValues`: finite `one_of` list, or a decimal range
       with a declared `Places`, capped at a `maxCount` argument
-- [ ] 1.2 Tests: `one_of`, bounded decimal range, unbounded decimal
+- [x] 1.2 Tests: `one_of`, bounded decimal range, unbounded decimal
       (`HasRange` without `HasPlaces`), no domain at all, count exceeding
       the cap
 
 ## 2. Bounded proof
 
-- [ ] 2.1 `conformancecycle.BoundedProofInputs`: vary one input concept's
+- [x] 2.1 `conformancecycle.BoundedProofInputs`: vary one input concept's
       own full enumerated domain at a time, baseline from the first
       worked example (mirrors `DirectedSamplingInputs`)
-- [ ] 2.2 `conformancecycle.CheckHypothesisBoundedProof`: run every case,
+- [x] 2.2 `conformancecycle.CheckHypothesisBoundedProof`: run every case,
       same verdict aggregation as `CheckHypothesisDirectedSampling`
-- [ ] 2.3 Tests mirroring `directedsampling_test.go`'s own coverage
+- [x] 2.3 Tests mirroring `directedsampling_test.go`'s own coverage
 
 ## 3. Complete proof
 
