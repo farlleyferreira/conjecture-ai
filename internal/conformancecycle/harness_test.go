@@ -33,11 +33,17 @@ func TestMain(m *testing.M) {
 		fakeImplPath += ".exe"
 	}
 
-	goBin := "go"
-	if runtime.GOOS == "windows" {
-		goBin = "go.exe"
+	// Located via PATH, not runtime.GOROOT() (deprecated since Go
+	// 1.24 - its own value reflects where this test binary was
+	// compiled, not necessarily a real toolchain install): go test
+	// itself only ever runs via the go tool, so "go" being
+	// unresolvable here would mean a broken environment, not
+	// something worth a fallback for.
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	goBin = filepath.Join(runtime.GOROOT(), "bin", goBin)
 
 	buildCmd := exec.Command(goBin, "build", "-o", fakeImplPath, "./testdata/fakeimpl")
 	if out, err := buildCmd.CombinedOutput(); err != nil {

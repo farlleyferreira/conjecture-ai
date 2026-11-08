@@ -41,16 +41,19 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// goBinary locates the Go toolchain by GOROOT rather than relying on
-// "go" being on PATH, since this test process's own environment does
-// not guarantee that (the same reason this project's own build
-// commands elsewhere use a full path to go.exe).
+// goBinary locates the go toolchain via PATH, not runtime.GOROOT()
+// (deprecated since Go 1.24 - its own value reflects where this test
+// binary was compiled, not necessarily a real toolchain install): go
+// test itself only ever runs via the go tool, so "go" being
+// unresolvable here would mean a broken environment, not something
+// worth a fallback for.
 func goBinary() string {
-	name := "go"
-	if runtime.GOOS == "windows" {
-		name = "go.exe"
+	path, err := exec.LookPath("go")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	return filepath.Join(runtime.GOROOT(), "bin", name)
+	return path
 }
 
 func TestBuildDockerArgs_NetworkNoneAndMountShape(t *testing.T) {
