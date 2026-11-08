@@ -39,4 +39,4 @@
 
 - [x] 5.1 Write this proposal/design/tasks set documenting the rigor-level
       interpretation and its rationale, before writing code
-- [ ] 5.2 Archive this change once merged
+- [x] 5.2 Archive this change once merged
