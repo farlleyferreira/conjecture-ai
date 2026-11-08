@@ -279,7 +279,7 @@ func TestRecordEvidence_IsLawPromotesToThesisAtCriticalThreshold(t *testing.T) {
 
 	// Below threshold: still Conformant status, still at Hypothesis
 	// stage - no promotion yet.
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", criticalRequiredCases-1, true, &bytes.Buffer{})
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.DirectedSampling, conformancecycle.Conformant, nil, "image", "spec-version", criticalRequiredCases-1, true, &bytes.Buffer{})
 
 	latest, found, err := evidenceledger.Latest(db, hypothesisID)
 	if err != nil {
@@ -291,7 +291,7 @@ func TestRecordEvidence_IsLawPromotesToThesisAtCriticalThreshold(t *testing.T) {
 
 	// One more failure-free case crosses the threshold and should
 	// promote the law to Thesis.
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", 1, true, &bytes.Buffer{})
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.DirectedSampling, conformancecycle.Conformant, nil, "image", "spec-version", 1, true, &bytes.Buffer{})
 
 	latest, found, err = evidenceledger.Latest(db, hypothesisID)
 	if err != nil {
@@ -315,8 +315,8 @@ func TestRecordEvidence_IsLawNonConformantResetsFailureFreeCases(t *testing.T) {
 	h := cjtr.Hypothesis{Name: "reset law", ID: "reset-law"}
 	hypothesisID := "demo-area::demo::some-rule::reset-law"
 
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", 500, true, &bytes.Buffer{})
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.NonConformant,
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.DirectedSampling, conformancecycle.Conformant, nil, "image", "spec-version", 500, true, &bytes.Buffer{})
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.DirectedSampling, conformancecycle.NonConformant,
 		&conformancecycle.Counterexample{Value: "x"}, "image", "spec-version", 0, true, &bytes.Buffer{})
 
 	count, err := userdefinedlaws.GetFailureFreeCases(db, hypothesisID)
@@ -333,7 +333,7 @@ func TestRecordEvidence_NotIsLawNeverPromotes(t *testing.T) {
 	h := cjtr.Hypothesis{Name: "plain hypothesis", ID: "plain-hypothesis"}
 	hypothesisID := "demo-area::demo::some-rule::plain-hypothesis"
 
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", evidenceledger.Critical.RequiredCases(), false, &bytes.Buffer{})
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.DirectedSampling, conformancecycle.Conformant, nil, "image", "spec-version", evidenceledger.Critical.RequiredCases(), false, &bytes.Buffer{})
 
 	latest, found, err := evidenceledger.Latest(db, hypothesisID)
 	if err != nil {
@@ -351,7 +351,7 @@ func TestRecordEvidence_IsLawRepeatedViolationsReachContested(t *testing.T) {
 	// lawContestedThreshold is 3: the first two NonConformant calls
 	// should still leave the law merely Violated.
 	for i := 0; i < lawContestedThreshold-1; i++ {
-		recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.NonConformant,
+		recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.DirectedSampling, conformancecycle.NonConformant,
 			&conformancecycle.Counterexample{Value: "x"}, "image", "spec-version", 0, true, &bytes.Buffer{})
 
 		status, err := userdefinedlaws.GetStatus(db, "demo-area::demo::some-rule::repeat-offender")
@@ -365,7 +365,7 @@ func TestRecordEvidence_IsLawRepeatedViolationsReachContested(t *testing.T) {
 
 	// The lawContestedThreshold-th NonConformant call crosses the
 	// threshold and should escalate to Contested.
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.NonConformant,
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.DirectedSampling, conformancecycle.NonConformant,
 		&conformancecycle.Counterexample{Value: "x"}, "image", "spec-version", 0, true, &bytes.Buffer{})
 
 	status, err := userdefinedlaws.GetStatus(db, "demo-area::demo::some-rule::repeat-offender")
@@ -508,7 +508,7 @@ func TestRecordEvidence_NoDeclaredIDIsNotRecorded(t *testing.T) {
 	db := openCheckTestStore(t)
 	h := cjtr.Hypothesis{Name: "anonymous"} // ID left empty
 
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", 0, false, &bytes.Buffer{})
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.DirectedSampling, conformancecycle.Conformant, nil, "image", "spec-version", 0, false, &bytes.Buffer{})
 
 	history, err := evidenceledger.History(db, "demo-area::demo::some-rule::anonymous")
 	if err != nil {
@@ -523,7 +523,7 @@ func TestRecordEvidence_InconclusiveIsRecordedAsOpen(t *testing.T) {
 	db := openCheckTestStore(t)
 	h := cjtr.Hypothesis{Name: "timed out", ID: "timed-out"}
 
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Inconclusive, nil, "image", "spec-version", 0, false, &bytes.Buffer{})
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.DirectedSampling, conformancecycle.Inconclusive, nil, "image", "spec-version", 0, false, &bytes.Buffer{})
 
 	history, err := evidenceledger.History(db, "demo-area::demo::some-rule::timed-out")
 	if err != nil {
@@ -550,7 +550,7 @@ func TestRecordEvidence_NonConformantDemotesFromPriorStage(t *testing.T) {
 		t.Fatalf("Append returned unexpected error: %v", err)
 	}
 
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.NonConformant,
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.DirectedSampling, conformancecycle.NonConformant,
 		&conformancecycle.Counterexample{Value: "x = -1"}, "image", "spec-version", 0, false, &bytes.Buffer{})
 
 	history, err := evidenceledger.History(db, hypothesisID)
@@ -578,7 +578,7 @@ func TestRecordEvidence_WarnsWhenPriorEvidenceIsStale(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "new-spec-version", 0, false, &stdout)
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.DirectedSampling, conformancecycle.Conformant, nil, "image", "new-spec-version", 0, false, &stdout)
 
 	if !strings.Contains(stdout.String(), "stale") {
 		t.Errorf("stdout = %q, want it to warn that prior evidence is stale", stdout.String())
@@ -598,7 +598,7 @@ func TestRecordEvidence_NoWarningWhenValidityHashUnchanged(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "same-spec-version", 0, false, &stdout)
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.DirectedSampling, conformancecycle.Conformant, nil, "image", "same-spec-version", 0, false, &stdout)
 
 	if strings.Contains(stdout.String(), "stale") {
 		t.Errorf("stdout = %q, should not warn about staleness when the validity hash is unchanged", stdout.String())
@@ -616,7 +616,7 @@ func TestRecordEvidence_ConformantCarriesPriorStageForward(t *testing.T) {
 		t.Fatalf("Append returned unexpected error: %v", err)
 	}
 
-	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.Conformant, nil, "image", "spec-version", 0, false, &bytes.Buffer{})
+	recordEvidence(db, "demo-area::demo::some-rule", h, conformancecycle.DirectedSampling, conformancecycle.Conformant, nil, "image", "spec-version", 0, false, &bytes.Buffer{})
 
 	history, err := evidenceledger.History(db, hypothesisID)
 	if err != nil {

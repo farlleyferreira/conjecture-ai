@@ -27,12 +27,12 @@
 
 ## 4. Rigor-level selection and wiring
 
-- [ ] 4.1 Selection function: law tries complete -> bounded -> directed
+- [x] 4.1 Selection function: law tries complete -> bounded -> directed
       sampling, in that order; plain hypothesis always directed sampling
-- [ ] 4.2 Wire into `check.go` and `implement.go` in place of the direct
+- [x] 4.2 Wire into `check.go` and `implement.go` in place of the direct
       `CheckHypothesisDirectedSampling` call
-- [ ] 4.3 `recordEvidence` records which level actually ran
-- [ ] 4.4 Full existing test suite passes unchanged (parity proof, same
+- [x] 4.3 `recordEvidence` records which level actually ran
+- [x] 4.4 Full existing test suite passes unchanged (parity proof, same
       discipline as the expression-core wiring)
 
 ## 5. Decision record
