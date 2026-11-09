@@ -10,13 +10,28 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/omissiondetection"
 )
 
-const verifyUsage = "usage: conjecture verify <file.cjtr> [--catalog <cat1,cat2,...> [--addressed <cat1,cat2,...>]]"
+const verifyUsage = "usage: conjecture verify <file.cjtr> [--scope <composite-id-prefix>] [--catalog <cat1,cat2,...> [--addressed <cat1,cat2,...>]]"
 
 // runVerify loads a .cjtr file and checks every hypothesis's declared
 // examples for internal consistency (see cjtr.CheckExample). It does not
 // yet check generated code against anything - that is the conformance
 // cycle capability, not started. This only checks that a ficha's own
 // examples agree with its own given/then/otherwise.
+//
+// --scope wires cjtr-language's own "Prefix-based verification scope"
+// scenario: "WHEN a user runs verification scoped to a composite ID
+// prefix... THEN the system verifies exactly the nodes whose composite
+// ID starts with that prefix." A "node" here is a rule (its own
+// three-segment compositeID) or the file-level user_defined_laws group
+// (the phenomenon's own two-segment compositeID, per this file's own
+// long-standing comment on that placement) - matching is a literal
+// string prefix test, nothing segment-aware, since the specification's
+// own wording and worked example never ask for more than that. Every
+// check this command runs against a hypothesis or law (falsifiability,
+// example consistency, the solver's consistency check) is scoped this
+// way when --scope is given; Type D omission reporting is not, since
+// it checks a whole area's own category coverage, not individual
+// rule/hypothesis nodes --scope names.
 //
 // --catalog/--addressed wire in omission-detection's Type D check
 // ("requirement nobody thought of"): the catalog of requirement
@@ -35,7 +50,7 @@ const verifyUsage = "usage: conjecture verify <file.cjtr> [--catalog <cat1,cat2,
 // would still be reported here as missing; this command does not
 // claim area-wide completeness beyond what it actually read.
 func runVerify(args []string, stdout, stderr io.Writer) int {
-	path, catalog, addressed, ok := parseVerifyArgs(args)
+	path, scope, catalog, addressed, ok := parseVerifyArgs(args)
 	if !ok {
 		_, _ = fmt.Fprintln(stderr, verifyUsage)
 		return 1
@@ -93,16 +108,24 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 	// two-segment prefix the cjtr-language spec's "Prefix-based
 	// verification scope" scenario already treats as a valid scope on its
 	// own, not a new convention invented here.
-	allHyps := append([]cjtr.Hypothesis{}, f.fileLaws...)
+	var allHyps []cjtr.Hypothesis
 
-	t, c, failed := checkHypotheses(f.fileLaws, f.phenomenonID, concepts, tables, stdout)
-	total += t
-	consistent += c
-	if failed {
-		exitCode = 1
+	if strings.HasPrefix(f.phenomenonID, scope) {
+		allHyps = append(allHyps, f.fileLaws...)
+
+		t, c, failed := checkHypotheses(f.fileLaws, f.phenomenonID, concepts, tables, stdout)
+		total += t
+		consistent += c
+		if failed {
+			exitCode = 1
+		}
 	}
 
 	for _, rule := range rules {
+		if !strings.HasPrefix(rule.CompositeID, scope) {
+			continue
+		}
+
 		hyps, err := cjtr.Hypotheses(rule.Body, concepts)
 		if err != nil {
 			_, _ = fmt.Fprintf(stdout, "%s: %v\n", rule.CompositeID, err)
@@ -152,24 +175,28 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 }
 
 // parseVerifyArgs parses runVerify's own arguments: the required
-// file path, plus the optional --catalog/--addressed flags (see
-// runVerify's own doc comment). ok is false on any malformed
+// file path, plus the optional --scope/--catalog/--addressed flags
+// (see runVerify's own doc comment). ok is false on any malformed
 // invocation - an unrecognized flag, a flag missing its value, more
 // than one positional argument, or --addressed without --catalog
 // (addressed categories mean nothing without a catalog to check them
-// against).
-func parseVerifyArgs(args []string) (path string, catalog omissiondetection.Catalog, addressed map[string]bool, ok bool) {
+// against). scope defaults to "", which matches every node ([strings.
+// HasPrefix] against an empty prefix is always true) - unscoped,
+// whole-file verification, exactly today's existing behavior.
+func parseVerifyArgs(args []string) (path, scope string, catalog omissiondetection.Catalog, addressed map[string]bool, ok bool) {
 	var catalogFlag, addressedFlag string
 	sawCatalog := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--catalog", "--addressed":
+		case "--scope", "--catalog", "--addressed":
 			flag := args[i]
 			i++
 			if i >= len(args) {
-				return "", nil, nil, false
+				return "", "", nil, nil, false
 			}
 			switch flag {
+			case "--scope":
+				scope = args[i]
 			case "--catalog":
 				catalogFlag = args[i]
 				sawCatalog = true
@@ -178,13 +205,13 @@ func parseVerifyArgs(args []string) (path string, catalog omissiondetection.Cata
 			}
 		default:
 			if path != "" {
-				return "", nil, nil, false
+				return "", "", nil, nil, false
 			}
 			path = args[i]
 		}
 	}
 	if path == "" || (!sawCatalog && addressedFlag != "") {
-		return "", nil, nil, false
+		return "", "", nil, nil, false
 	}
 
 	if sawCatalog {
@@ -194,7 +221,7 @@ func parseVerifyArgs(args []string) (path string, catalog omissiondetection.Cata
 	for _, c := range splitNonEmpty(addressedFlag) {
 		addressed[c] = true
 	}
-	return path, catalog, addressed, true
+	return path, scope, catalog, addressed, true
 }
 
 // splitNonEmpty splits s on commas, dropping empty entries - so both
