@@ -61,6 +61,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runLaw(args[1:], stdout, stderr)
 	case "translate":
 		return runTranslate(args[1:], stdout, stderr)
+	case "settings":
+		return runSettings(args[1:], stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
 		return 1
