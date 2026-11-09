@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
 	"os"
@@ -53,23 +54,8 @@ func runLaw(args []string, stdout, stderr io.Writer) int {
 // outcome changes nothing: it is "Precedence over promoted hypotheses"
 // reported back, not a status this package's own lifecycle tracks.
 func runLawResolveConflict(args []string, stdout, stderr io.Writer) int {
-	var lawID string
-	var formalProofContradicts, equalAuthority bool
-	for _, a := range args {
-		switch a {
-		case "--formal-proof-contradicts":
-			formalProofContradicts = true
-		case "--equal-authority":
-			equalAuthority = true
-		default:
-			if lawID != "" {
-				_, _ = fmt.Fprintln(stderr, lawUsage)
-				return 1
-			}
-			lawID = a
-		}
-	}
-	if lawID == "" {
+	lawID, formalProofContradicts, equalAuthority, ok := parseResolveConflictArgs(args)
+	if !ok {
 		_, _ = fmt.Fprintln(stderr, lawUsage)
 		return 1
 	}
@@ -85,6 +71,55 @@ func runLawResolveConflict(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	defer func() { _ = db.Close() }()
+
+	return resolveLawConflict(db, lawID, formalProofContradicts, equalAuthority, stdout, stderr)
+}
+
+// parseResolveConflictArgs parses "resolve-conflict"'s own arguments:
+// the required law-id, plus the two optional presence flags. ok is
+// false on any malformed invocation - an unrecognized flag, a missing
+// law-id, or more than one positional argument.
+func parseResolveConflictArgs(args []string) (lawID string, formalProofContradicts, equalAuthority, ok bool) {
+	for _, a := range args {
+		switch a {
+		case "--formal-proof-contradicts":
+			formalProofContradicts = true
+		case "--equal-authority":
+			equalAuthority = true
+		default:
+			if lawID != "" {
+				return "", false, false, false
+			}
+			lawID = a
+		}
+	}
+	if lawID == "" {
+		return "", false, false, false
+	}
+	return lawID, formalProofContradicts, equalAuthority, true
+}
+
+// resolveLawConflict applies [userdefinedlaws.ResolveConflict] to
+// lawID against db and reports the outcome. Factored out from
+// runLawResolveConflict so a test can inject a temporary store
+// instead of the real per-OS one [persistence.OpenStore] would
+// otherwise open - the same reason check.go's own
+// checkHypothesisConformance takes db as a parameter rather than
+// opening a store itself.
+//
+// An AutoInvalidated outcome also records the law's status as
+// [userdefinedlaws.Invalidated] - the one status this codebase could
+// not reach from any other path until now (see check.go's own
+// honesty note on recordEvidence). A RaiseQuestion outcome is
+// reported on stdout as a flagged line for a human to act on - the
+// same "print it for a human, decide nothing unilaterally" posture
+// recordEvidence's own staleness warning already takes - and does not
+// change the law's stored status, since the specification only names
+// a status transition for the automatic-invalidation and contested-
+// threshold cases, not for raising a question. A LawPrevails outcome
+// changes nothing: it is "Precedence over promoted hypotheses"
+// reported back, not a status this package's own lifecycle tracks.
+func resolveLawConflict(db *sql.DB, lawID string, formalProofContradicts, equalAuthority bool, stdout, stderr io.Writer) int {
 	if err := userdefinedlaws.EnsureSchema(db); err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
