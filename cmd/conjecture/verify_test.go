@@ -184,6 +184,65 @@ func TestRunVerify_CatalogFlagMissingValueIsUsageError(t *testing.T) {
 	}
 }
 
+func TestRunVerify_ScopeToRuleOnlyChecksThatRule(t *testing.T) {
+	path := writeFixture(t, fixtureCjtr)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path, "--scope", "shipping::free-shipping::free-above"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("runVerify exit code = %d, want 0; stdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "shipping::free-shipping::free-above") {
+		t.Errorf("stdout should mention the scoped rule, got:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "3/3 examples consistent") {
+		t.Errorf("stdout should report 3/3 consistent examples (the scoped rule's own examples), got:\n%s", stdout.String())
+	}
+}
+
+func TestRunVerify_ScopeExcludingEveryRuleChecksNothing(t *testing.T) {
+	path := writeFixture(t, fixtureCjtr)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path, "--scope", "no-such-area"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("runVerify exit code = %d, want 0; stdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "0/0 examples consistent") {
+		t.Errorf("stdout should report 0/0 examples (nothing matched the scope), got:\n%s", stdout.String())
+	}
+}
+
+func TestRunVerify_NoScopeChecksEverything(t *testing.T) {
+	path := writeFixture(t, fixtureCjtr)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Errorf("runVerify exit code = %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "3/3 examples consistent") {
+		t.Errorf("stdout should report every example checked with no --scope, got:\n%s", stdout.String())
+	}
+}
+
+func TestRunVerify_ScopeFlagMissingValueIsUsageError(t *testing.T) {
+	path := writeFixture(t, fixtureCjtr)
+
+	var stdout, stderr bytes.Buffer
+	code := runVerify([]string{path, "--scope"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Errorf("runVerify with a valueless --scope: exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "usage:") {
+		t.Errorf("stderr should contain a usage message, got %q", stderr.String())
+	}
+}
+
 func TestRunVerify_ConfirmedFileHasNoNotice(t *testing.T) {
 	signed := signContent(t, []byte(fixtureCjtr), true)
 	path := writeFixture(t, string(signed))
