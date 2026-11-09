@@ -3,22 +3,43 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
 	"github.com/farlleyferreira/conjecture-ai/internal/expressioncore"
+	"github.com/farlleyferreira/conjecture-ai/internal/omissiondetection"
 )
+
+const verifyUsage = "usage: conjecture verify <file.cjtr> [--catalog <cat1,cat2,...> [--addressed <cat1,cat2,...>]]"
 
 // runVerify loads a .cjtr file and checks every hypothesis's declared
 // examples for internal consistency (see cjtr.CheckExample). It does not
 // yet check generated code against anything - that is the conformance
 // cycle capability, not started. This only checks that a ficha's own
 // examples agree with its own given/then/otherwise.
+//
+// --catalog/--addressed wire in omission-detection's Type D check
+// ("requirement nobody thought of"): the catalog of requirement
+// categories to check for, and which of them this file's own rules
+// address, are both caller-supplied - nothing in the cjtr-language
+// grammar lets a rule declare its own category, so this command does
+// not guess one (see [omissiondetection.CheckTypeD]'s own doc
+// comment). Omitting --catalog skips Type D entirely, the same as an
+// empty catalog would: there is nothing configured to check for.
+//
+// Honesty note: this only sees the one phenomenon file given on the
+// command line, not every file in its area - "the relevant area"
+// [omissiondetection.CheckTypeD] reports against is only as complete
+// as what this single run loaded. A category this file does not
+// address but a sibling phenomenon file in the same area already does
+// would still be reported here as missing; this command does not
+// claim area-wide completeness beyond what it actually read.
 func runVerify(args []string, stdout, stderr io.Writer) int {
-	if len(args) != 1 {
-		_, _ = fmt.Fprintln(stderr, "usage: conjecture verify <file.cjtr>")
+	path, catalog, addressed, ok := parseVerifyArgs(args)
+	if !ok {
+		_, _ = fmt.Fprintln(stderr, verifyUsage)
 		return 1
 	}
-	path := args[0]
 
 	f, err := loadFicha(path)
 	if err != nil {
@@ -116,8 +137,78 @@ func runVerify(args []string, stdout, stderr io.Writer) int {
 		exitCode = 1
 	}
 
+	// omission-detection's Type D ("requirement nobody thought of"):
+	// reported, not a failure - the same posture Type A omissions
+	// already take in check.go/implement.go (something to flag for a
+	// human, not something that fails the run on its own).
+	if len(catalog) > 0 {
+		for _, omission := range omissiondetection.CheckTypeD(catalog, f.area, addressed) {
+			_, _ = fmt.Fprintf(stdout, "%s: TYPE D OMISSION: category %q has no rule addressing it in this file's own area\n", f.phenomenonID, omission.Category)
+		}
+	}
+
 	_, _ = fmt.Fprintf(stdout, "\n%d/%d examples consistent\n", consistent, total)
 	return exitCode
+}
+
+// parseVerifyArgs parses runVerify's own arguments: the required
+// file path, plus the optional --catalog/--addressed flags (see
+// runVerify's own doc comment). ok is false on any malformed
+// invocation - an unrecognized flag, a flag missing its value, more
+// than one positional argument, or --addressed without --catalog
+// (addressed categories mean nothing without a catalog to check them
+// against).
+func parseVerifyArgs(args []string) (path string, catalog omissiondetection.Catalog, addressed map[string]bool, ok bool) {
+	var catalogFlag, addressedFlag string
+	sawCatalog := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--catalog", "--addressed":
+			flag := args[i]
+			i++
+			if i >= len(args) {
+				return "", nil, nil, false
+			}
+			switch flag {
+			case "--catalog":
+				catalogFlag = args[i]
+				sawCatalog = true
+			case "--addressed":
+				addressedFlag = args[i]
+			}
+		default:
+			if path != "" {
+				return "", nil, nil, false
+			}
+			path = args[i]
+		}
+	}
+	if path == "" || (!sawCatalog && addressedFlag != "") {
+		return "", nil, nil, false
+	}
+
+	if sawCatalog {
+		catalog = omissiondetection.Catalog(splitNonEmpty(catalogFlag))
+	}
+	addressed = make(map[string]bool)
+	for _, c := range splitNonEmpty(addressedFlag) {
+		addressed[c] = true
+	}
+	return path, catalog, addressed, true
+}
+
+// splitNonEmpty splits s on commas, dropping empty entries - so both
+// "" and a trailing/leading/doubled comma produce no spurious blank
+// category rather than an error this command would otherwise have to
+// invent wording for.
+func splitNonEmpty(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // checkHypotheses checks every hypothesis's (or user-defined law's)
