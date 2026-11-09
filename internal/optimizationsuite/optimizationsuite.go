@@ -1,8 +1,12 @@
-// Package optimizationsuite implements the pure-logic slice of the
-// optimization-suite capability (openspec/specs/optimization-suite/
-// spec.md) that does not depend on real execution: the approval gate
-// and floor-clamp a multi-objective calibration proposal goes through
-// before it can take effect.
+// Package optimizationsuite implements the optimization-suite
+// capability (openspec/specs/optimization-suite/spec.md): the
+// deterministic evolutionary input generator ([EvolveForBehaviorChange],
+// evolutionary.go), and the approval gate and floor-clamp a multi-
+// objective calibration proposal goes through before it can take
+// effect ([ApplyProposal], this file), plus the small per-field
+// current-value store ([EnsureSchema]/[GetCurrent]/[SetCurrent],
+// store.go) that lets a calibration decision actually carry forward
+// between runs instead of starting over from nothing every time.
 //
 // "Bandit-based swarm budget allocation": the specification requires
 // reusing attacker-swarm's own bandit mechanism verbatim ("it uses the
@@ -11,11 +15,11 @@
 // attackerswarm.AllocateNext directly, exactly as attacker-swarm itself
 // does.
 //
-// Not attempted here: the evolutionary input generator (a genetic
-// algorithm with its own mutation/crossover design this package does
-// not yet have grounds to invent a shape for) and "calibration runs
-// offline" (a scheduling property, not a decision rule a pure function
-// can check).
+// Not attempted here: the multi-objective calibration algorithm itself
+// (what actually proposes a CalibrationProposal's own Value - this
+// package only gates and applies one a caller already produced) and
+// "calibration runs offline" (a scheduling property, not a decision
+// rule a pure function can check).
 package optimizationsuite
 
 import "github.com/farlleyferreira/conjecture-ai/internal/teamconfig"
