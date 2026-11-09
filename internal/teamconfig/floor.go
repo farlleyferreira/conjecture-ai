@@ -29,6 +29,17 @@ const (
 	Lower
 )
 
+func (d Direction) String() string {
+	switch d {
+	case Higher:
+		return "higher"
+	case Lower:
+		return "lower"
+	default:
+		return "unknown direction"
+	}
+}
+
 // orderedByUnderlying is any type whose comparison operators order it
 // meaningfully as its own underlying numeric type - plain numeric types
 // directly, and any named type defined over one (such as this
