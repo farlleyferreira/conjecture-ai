@@ -270,3 +270,55 @@ func TestContextRestore_NotArchivedIsError(t *testing.T) {
 		t.Errorf("contextRestore on an Active context: exit code = %d, want 1", code)
 	}
 }
+
+func TestContextResolveConflict_ReferenceOutranksEmbedding(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runContext([]string{"resolve-conflict", "--mode-a", "ByReference", "--mode-b", "ByEmbedding"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("resolve-conflict returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "ByReference outranks ByEmbedding") {
+		t.Errorf("stdout = %q, want it to report ByReference outranking ByEmbedding", stdout.String())
+	}
+}
+
+func TestContextResolveConflict_OrderOfFlagsDoesNotMatter(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runContext([]string{"resolve-conflict", "--mode-b", "ByView", "--mode-a", "ByInheritance"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("resolve-conflict returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "ByInheritance outranks ByView") {
+		t.Errorf("stdout = %q, want it to report ByInheritance outranking ByView", stdout.String())
+	}
+}
+
+func TestContextResolveConflict_SameModeIsUndecided(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runContext([]string{"resolve-conflict", "--mode-a", "ByReference", "--mode-b", "ByReference"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("resolve-conflict returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "undecided") {
+		t.Errorf("stdout = %q, want it to report the outcome as undecided for two sources of the same mode", stdout.String())
+	}
+}
+
+func TestContextResolveConflict_UnrecognizedModeIsError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runContext([]string{"resolve-conflict", "--mode-a", "ByReference", "--mode-b", "Bogus"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("resolve-conflict with an unrecognized mode: exit code = %d, want 1", code)
+	}
+}
+
+func TestContextResolveConflict_MissingFlagIsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runContext([]string{"resolve-conflict", "--mode-a", "ByReference"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("resolve-conflict with only --mode-a: exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "usage:") {
+		t.Errorf("stderr should contain a usage message, got %q", stderr.String())
+	}
+}

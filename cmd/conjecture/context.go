@@ -12,7 +12,7 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 )
 
-const contextUsage = "usage: conjecture context <list|resume|open|restore> [args]"
+const contextUsage = "usage: conjecture context <list|resume|open|restore|resolve-conflict> [args]"
 
 // runContext implements "conjecture context <subcommand>" for the four
 // of context-composition's six lifecycle commands this codebase has
@@ -49,6 +49,14 @@ const contextUsage = "usage: conjecture context <list|resume|open|restore> [args
 // whatever eventually drives this (a conformance cycle, say) calling
 // [contextcomposition.CreateContext]/[contextcomposition.AddVersion]
 // directly, not by this CLI surface.
+//
+// "resolve-conflict" wires [contextcomposition.ResolveConflict] -
+// PrecedenceOrder's own conflict rule, unused by any command until
+// now - into the CLI. It needs no store: the two composition modes in
+// conflict are the operator's own facts about what is actually
+// conflicting, the same "caller supplies the fact" posture "conjecture
+// verify"'s --catalog/--addressed flags and "conjecture law resolve-
+// conflict" already take.
 func runContext(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		_, _ = fmt.Fprintln(stderr, contextUsage)
@@ -57,6 +65,8 @@ func runContext(args []string, stdout, stderr io.Writer) int {
 	subcommand, rest := args[0], args[1:]
 	switch subcommand {
 	case "list", "resume", "open", "restore":
+	case "resolve-conflict":
+		return contextResolveConflict(rest, stdout, stderr)
 	default:
 		_, _ = fmt.Fprintln(stderr, contextUsage)
 		return 1
@@ -187,4 +197,70 @@ func contextRestore(db *sql.DB, args []string, stdout, stderr io.Writer) int {
 	}
 	_, _ = fmt.Fprintf(stdout, "restored %s (%s)\n", c.ID, c.State)
 	return 0
+}
+
+// contextResolveConflict implements "conjecture context resolve-
+// conflict --mode-a <mode> --mode-b <mode>" - [contextcomposition.
+// ResolveConflict] applied to two operator-named composition modes.
+// When decided is false (the two modes are the same one), this
+// reports that honestly rather than printing a winner
+// [contextcomposition.ResolveConflict]'s own doc comment says is not
+// meaningful - the same "flag it for a human, decide nothing
+// unilaterally" posture "conjecture law resolve-conflict"'s own
+// RaiseQuestion outcome already takes.
+func contextResolveConflict(args []string, stdout, stderr io.Writer) int {
+	usage := "usage: conjecture context resolve-conflict --mode-a <ByReference|ByEmbedding|ByInheritance|ByView> --mode-b <...>"
+	var modeAFlag, modeBFlag string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--mode-a", "--mode-b":
+			flag := args[i]
+			i++
+			if i >= len(args) {
+				_, _ = fmt.Fprintln(stderr, usage)
+				return 1
+			}
+			switch flag {
+			case "--mode-a":
+				modeAFlag = args[i]
+			case "--mode-b":
+				modeBFlag = args[i]
+			}
+		default:
+			_, _ = fmt.Fprintln(stderr, usage)
+			return 1
+		}
+	}
+	if modeAFlag == "" || modeBFlag == "" {
+		_, _ = fmt.Fprintln(stderr, usage)
+		return 1
+	}
+
+	modeA, err := contextcomposition.ParseCompositionMode(modeAFlag)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	modeB, err := contextcomposition.ParseCompositionMode(modeBFlag)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+
+	winner, decided := contextcomposition.ResolveConflict(modeA, modeB)
+	if !decided {
+		_, _ = fmt.Fprintf(stdout, "undecided: %s and %s are the same mode - PrecedenceOrder ranks the four modes against each other, not two sources composed the same way\n", modeA, modeB)
+		return 0
+	}
+	_, _ = fmt.Fprintf(stdout, "%s outranks %s\n", winner, otherMode(winner, modeA, modeB))
+	return 0
+}
+
+// otherMode returns whichever of a and b is not winner - the loser,
+// for contextResolveConflict's own report line.
+func otherMode(winner, a, b contextcomposition.CompositionMode) contextcomposition.CompositionMode {
+	if winner == a {
+		return b
+	}
+	return a
 }
