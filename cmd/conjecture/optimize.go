@@ -34,6 +34,13 @@ const optimizeUsage = "usage: conjecture optimize set-current <field> <value>\n"
 // file declares (see loadSettingsFile), and persisted across runs via
 // [optimizationsuite.SetCurrent] so the next calibration has a real
 // current value to compare against instead of starting from nothing.
+//
+// "calibrate" also wires cli-mcp-integration's own "Rigor-reducing
+// CLI actions stay unconfirmed" for the first time: when a calibration
+// actually moves field's current value to one weaker than it was
+// before this call (see [calibrateAndMarkUnconfirmed]'s own before/
+// after comparison and [markSpecUnconfirmed]), the settings.cjtr file
+// that declared its floor is re-signed with confirmed: false.
 func runOptimize(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		_, _ = fmt.Fprintln(stderr, optimizeUsage)
@@ -173,7 +180,69 @@ func runOptimizeCalibrate(args []string, stdout, stderr io.Writer) int {
 	}
 	defer func() { _ = db.Close() }()
 
-	return calibrate(db, field, proposalValue, approved, setting.Floor, setting.Direction, stdout, stderr)
+	return calibrateAndMarkUnconfirmed(db, path, field, proposalValue, approved, setting.Floor, setting.Direction, stdout, stderr)
+}
+
+// calibrateAndMarkUnconfirmed implements "calibrate"'s own real logic
+// against db - the thin, real-path wrapper around [calibrate], plus
+// cli-mcp-integration's own "Rigor-reducing CLI actions stay
+// unconfirmed": it reads field's current value before and after
+// calibrating and, when the new value is weaker than the old one in
+// direction, re-signs path with confirmed: false via
+// [markSpecUnconfirmed]. A test calls this directly against an
+// injected temporary store instead of the real per-OS one
+// [persistence.OpenStore] would otherwise open.
+func calibrateAndMarkUnconfirmed(db *sql.DB, path, field string, proposalValue float64, approved bool, floor float64, direction teamconfig.Direction, stdout, stderr io.Writer) int {
+	before, hadBefore, err := optimizationsuite.GetCurrent(db, field)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+
+	code := calibrate(db, field, proposalValue, approved, floor, direction, stdout, stderr)
+	if code != 0 || !hadBefore {
+		return code
+	}
+
+	after, foundAfter, err := optimizationsuite.GetCurrent(db, field)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	if foundAfter && !teamconfig.MeetsFloor(after, before, direction) {
+		if err := markSpecUnconfirmed(path, field, before, after, stdout, stderr); err != nil {
+			_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+			return 1
+		}
+	}
+	return 0
+}
+
+// markSpecUnconfirmed implements cli-mcp-integration's "Rigor-reducing
+// CLI actions stay unconfirmed": "WHEN an action taken through the
+// CLI would reduce verification rigor... THEN the system SHALL mark
+// the affected specification as confirmed: false until a human
+// reviews it." runOptimizeCalibrate's own before/after comparison
+// (via [teamconfig.MeetsFloor]) is what decides "would reduce
+// verification rigor" is true here - field's current calibrated value
+// moved to one weaker than it was before this very call, in path's own
+// declared direction - and this only re-signs path once that is
+// already established; it does not re-derive the comparison itself.
+//
+// The re-sign is attributed to whoever is running this CLI right now
+// (the same OS-user fallback "conjecture sign" itself uses when
+// --user is not given), not to path's previous signer: this is a new,
+// separate signing event the previous signer did not perform.
+func markSpecUnconfirmed(path, field string, before, after float64, stdout, stderr io.Writer) error {
+	userName, err := currentOSUser()
+	if err != nil {
+		return fmt.Errorf("determining the OS user to attribute this re-sign to: %w", err)
+	}
+	if err := resignInPlace(path, userName, false); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(stdout, "%s: lowered rigor (%v -> %v) - %s marked confirmed: false until reviewed\n", field, before, after, path)
+	return nil
 }
 
 // calibrate implements "conjecture optimize calibrate"'s own real

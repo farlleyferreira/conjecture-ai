@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -172,6 +173,106 @@ func TestRunOptimizeCalibrate_MissingProposalIsUsageError(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "usage:") {
 		t.Errorf("stderr should contain a usage message, got %q", stderr.String())
+	}
+}
+
+func TestMarkSpecUnconfirmed_WritesConfirmedFalse(t *testing.T) {
+	path := writeSettingsFixture(t, settingsFixture)
+
+	var stdout, stderr bytes.Buffer
+	if err := markSpecUnconfirmed(path, "work_max_attempts_per_item", 10, 5, &stdout, &stderr); err != nil {
+		t.Fatalf("markSpecUnconfirmed returned unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "10 -> 5") {
+		t.Errorf("stdout should report the before/after values, got %q", stdout.String())
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading file: %v", err)
+	}
+	if !strings.Contains(string(content), "confirmed: false") {
+		t.Errorf("file should be re-signed with confirmed: false, got:\n%s", content)
+	}
+}
+
+func TestCalibrateAndMarkUnconfirmed_LoweringRigorMarksSpecUnconfirmed(t *testing.T) {
+	db := openOptimizeTestStore(t)
+	settingsPath := writeSettingsFixture(t, settingsFixture)
+	if err := optimizationsuite.SetCurrent(db, "work_max_attempts_per_item", 10); err != nil {
+		t.Fatalf("SetCurrent returned unexpected error: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := calibrateAndMarkUnconfirmed(db, settingsPath, "work_max_attempts_per_item", 5, true, 3, teamconfig.Higher, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("calibrateAndMarkUnconfirmed returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "confirmed: false") {
+		t.Errorf("stdout should report the spec marked unconfirmed, got:\n%s", stdout.String())
+	}
+
+	content, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("reading settings file: %v", err)
+	}
+	if !strings.Contains(string(content), "confirmed: false") {
+		t.Errorf("settings.cjtr should be re-signed with confirmed: false (5 < 10, Higher direction), got:\n%s", content)
+	}
+}
+
+func TestCalibrateAndMarkUnconfirmed_RaisingRigorDoesNotMarkUnconfirmed(t *testing.T) {
+	db := openOptimizeTestStore(t)
+	settingsPath := writeSettingsFixture(t, settingsFixture)
+	if err := optimizationsuite.SetCurrent(db, "work_max_attempts_per_item", 3); err != nil {
+		t.Fatalf("SetCurrent returned unexpected error: %v", err)
+	}
+	before, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("reading settings file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := calibrateAndMarkUnconfirmed(db, settingsPath, "work_max_attempts_per_item", 10, true, 3, teamconfig.Higher, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("calibrateAndMarkUnconfirmed returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "confirmed") {
+		t.Errorf("stdout should not mention confirmed for a rigor-raising calibration (10 > 3, Higher direction), got:\n%s", stdout.String())
+	}
+
+	after, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("reading settings file: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("settings.cjtr should be untouched by a rigor-raising calibration, got:\n%s", after)
+	}
+}
+
+func TestCalibrateAndMarkUnconfirmed_NotApprovedDoesNotMarkUnconfirmed(t *testing.T) {
+	db := openOptimizeTestStore(t)
+	settingsPath := writeSettingsFixture(t, settingsFixture)
+	if err := optimizationsuite.SetCurrent(db, "work_max_attempts_per_item", 10); err != nil {
+		t.Fatalf("SetCurrent returned unexpected error: %v", err)
+	}
+	before, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("reading settings file: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := calibrateAndMarkUnconfirmed(db, settingsPath, "work_max_attempts_per_item", 1, false, 3, teamconfig.Higher, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("calibrateAndMarkUnconfirmed returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+
+	after, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("reading settings file: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("settings.cjtr should be untouched when the proposal is not approved (current never actually changes), got:\n%s", after)
 	}
 }
 
