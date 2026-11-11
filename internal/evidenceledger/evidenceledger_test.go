@@ -81,6 +81,51 @@ func TestStage_String(t *testing.T) {
 	}
 }
 
+func TestWeight_String(t *testing.T) {
+	tests := []struct {
+		w    Weight
+		want string
+	}{
+		{Low, "low"},
+		{Medium, "medium"},
+		{High, "high"},
+		{Critical, "critical"},
+	}
+	for _, tt := range tests {
+		if got := tt.w.String(); got != tt.want {
+			t.Errorf("Weight(%v).String() = %q, want %q", int(tt.w), got, tt.want)
+		}
+	}
+}
+
+func TestParseWeight(t *testing.T) {
+	tests := []struct {
+		s    string
+		want Weight
+	}{
+		{"low", Low},
+		{"medium", Medium},
+		{"high", High},
+		{"critical", Critical},
+	}
+	for _, tt := range tests {
+		got, err := ParseWeight(tt.s)
+		if err != nil {
+			t.Errorf("ParseWeight(%q) returned unexpected error: %v", tt.s, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("ParseWeight(%q) = %v, want %v", tt.s, got, tt.want)
+		}
+	}
+}
+
+func TestParseWeight_UnrecognizedIsAnError(t *testing.T) {
+	if _, err := ParseWeight("extreme"); err == nil {
+		t.Error("ParseWeight(\"extreme\") = nil error, want one")
+	}
+}
+
 func TestValidityHash_Deterministic(t *testing.T) {
 	h1 := ValidityHash("spec-1.0", "code-abc", "harness-1", "slm-x", "operator-y")
 	h2 := ValidityHash("spec-1.0", "code-abc", "harness-1", "slm-x", "operator-y")

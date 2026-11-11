@@ -67,6 +67,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runOptimize(args[1:], stdout, stderr)
 	case "watch":
 		return runWatch(args[1:], stdout, stderr)
+	case "graph":
+		return runGraph(args[1:], stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
 		return 1
