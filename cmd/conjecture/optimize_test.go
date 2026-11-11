@@ -196,21 +196,17 @@ func TestMarkSpecUnconfirmed_WritesConfirmedFalse(t *testing.T) {
 	}
 }
 
-func TestRunOptimizeCalibrate_LoweringRigorMarksSpecUnconfirmed(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
+func TestCalibrateAndMarkUnconfirmed_LoweringRigorMarksSpecUnconfirmed(t *testing.T) {
+	db := openOptimizeTestStore(t)
 	settingsPath := writeSettingsFixture(t, settingsFixture)
-
-	var stdout, stderr bytes.Buffer
-	if code := runOptimize([]string{"set-current", "work_max_attempts_per_item", "10"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("seeding set-current failed: exit code %d; stderr:\n%s", code, stderr.String())
+	if err := optimizationsuite.SetCurrent(db, "work_max_attempts_per_item", 10); err != nil {
+		t.Fatalf("SetCurrent returned unexpected error: %v", err)
 	}
 
-	stdout.Reset()
-	stderr.Reset()
-	code := runOptimize([]string{"calibrate", settingsPath, "work_max_attempts_per_item", "--proposal", "5", "--approved"}, &stdout, &stderr)
+	var stdout, stderr bytes.Buffer
+	code := calibrateAndMarkUnconfirmed(db, settingsPath, "work_max_attempts_per_item", 5, true, 3, teamconfig.Higher, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("calibrate returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+		t.Fatalf("calibrateAndMarkUnconfirmed returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "confirmed: false") {
 		t.Errorf("stdout should report the spec marked unconfirmed, got:\n%s", stdout.String())
@@ -225,26 +221,21 @@ func TestRunOptimizeCalibrate_LoweringRigorMarksSpecUnconfirmed(t *testing.T) {
 	}
 }
 
-func TestRunOptimizeCalibrate_RaisingRigorDoesNotMarkUnconfirmed(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
+func TestCalibrateAndMarkUnconfirmed_RaisingRigorDoesNotMarkUnconfirmed(t *testing.T) {
+	db := openOptimizeTestStore(t)
 	settingsPath := writeSettingsFixture(t, settingsFixture)
-
-	var stdout, stderr bytes.Buffer
-	if code := runOptimize([]string{"set-current", "work_max_attempts_per_item", "3"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("seeding set-current failed: exit code %d; stderr:\n%s", code, stderr.String())
+	if err := optimizationsuite.SetCurrent(db, "work_max_attempts_per_item", 3); err != nil {
+		t.Fatalf("SetCurrent returned unexpected error: %v", err)
 	}
-
 	before, err := os.ReadFile(settingsPath)
 	if err != nil {
 		t.Fatalf("reading settings file: %v", err)
 	}
 
-	stdout.Reset()
-	stderr.Reset()
-	code := runOptimize([]string{"calibrate", settingsPath, "work_max_attempts_per_item", "--proposal", "10", "--approved"}, &stdout, &stderr)
+	var stdout, stderr bytes.Buffer
+	code := calibrateAndMarkUnconfirmed(db, settingsPath, "work_max_attempts_per_item", 10, true, 3, teamconfig.Higher, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("calibrate returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+		t.Fatalf("calibrateAndMarkUnconfirmed returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
 	}
 	if strings.Contains(stdout.String(), "confirmed") {
 		t.Errorf("stdout should not mention confirmed for a rigor-raising calibration (10 > 3, Higher direction), got:\n%s", stdout.String())
@@ -259,26 +250,21 @@ func TestRunOptimizeCalibrate_RaisingRigorDoesNotMarkUnconfirmed(t *testing.T) {
 	}
 }
 
-func TestRunOptimizeCalibrate_NotApprovedDoesNotMarkUnconfirmed(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
+func TestCalibrateAndMarkUnconfirmed_NotApprovedDoesNotMarkUnconfirmed(t *testing.T) {
+	db := openOptimizeTestStore(t)
 	settingsPath := writeSettingsFixture(t, settingsFixture)
-
-	var stdout, stderr bytes.Buffer
-	if code := runOptimize([]string{"set-current", "work_max_attempts_per_item", "10"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("seeding set-current failed: exit code %d; stderr:\n%s", code, stderr.String())
+	if err := optimizationsuite.SetCurrent(db, "work_max_attempts_per_item", 10); err != nil {
+		t.Fatalf("SetCurrent returned unexpected error: %v", err)
 	}
-
 	before, err := os.ReadFile(settingsPath)
 	if err != nil {
 		t.Fatalf("reading settings file: %v", err)
 	}
 
-	stdout.Reset()
-	stderr.Reset()
-	code := runOptimize([]string{"calibrate", settingsPath, "work_max_attempts_per_item", "--proposal", "1"}, &stdout, &stderr)
+	var stdout, stderr bytes.Buffer
+	code := calibrateAndMarkUnconfirmed(db, settingsPath, "work_max_attempts_per_item", 1, false, 3, teamconfig.Higher, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("calibrate returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+		t.Fatalf("calibrateAndMarkUnconfirmed returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
 	}
 
 	after, err := os.ReadFile(settingsPath)

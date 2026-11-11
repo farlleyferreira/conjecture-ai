@@ -38,9 +38,9 @@ const optimizeUsage = "usage: conjecture optimize set-current <field> <value>\n"
 // "calibrate" also wires cli-mcp-integration's own "Rigor-reducing
 // CLI actions stay unconfirmed" for the first time: when a calibration
 // actually moves field's current value to one weaker than it was
-// before this call (see runOptimizeCalibrate's own before/after
-// comparison and [markSpecUnconfirmed]), the settings.cjtr file that
-// declared its floor is re-signed with confirmed: false.
+// before this call (see [calibrateAndMarkUnconfirmed]'s own before/
+// after comparison and [markSpecUnconfirmed]), the settings.cjtr file
+// that declared its floor is re-signed with confirmed: false.
 func runOptimize(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		_, _ = fmt.Fprintln(stderr, optimizeUsage)
@@ -180,13 +180,26 @@ func runOptimizeCalibrate(args []string, stdout, stderr io.Writer) int {
 	}
 	defer func() { _ = db.Close() }()
 
+	return calibrateAndMarkUnconfirmed(db, path, field, proposalValue, approved, setting.Floor, setting.Direction, stdout, stderr)
+}
+
+// calibrateAndMarkUnconfirmed implements "calibrate"'s own real logic
+// against db - the thin, real-path wrapper around [calibrate], plus
+// cli-mcp-integration's own "Rigor-reducing CLI actions stay
+// unconfirmed": it reads field's current value before and after
+// calibrating and, when the new value is weaker than the old one in
+// direction, re-signs path with confirmed: false via
+// [markSpecUnconfirmed]. A test calls this directly against an
+// injected temporary store instead of the real per-OS one
+// [persistence.OpenStore] would otherwise open.
+func calibrateAndMarkUnconfirmed(db *sql.DB, path, field string, proposalValue float64, approved bool, floor float64, direction teamconfig.Direction, stdout, stderr io.Writer) int {
 	before, hadBefore, err := optimizationsuite.GetCurrent(db, field)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
 
-	code := calibrate(db, field, proposalValue, approved, setting.Floor, setting.Direction, stdout, stderr)
+	code := calibrate(db, field, proposalValue, approved, floor, direction, stdout, stderr)
 	if code != 0 || !hadBefore {
 		return code
 	}
@@ -196,7 +209,7 @@ func runOptimizeCalibrate(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
-	if foundAfter && !teamconfig.MeetsFloor(after, before, setting.Direction) {
+	if foundAfter && !teamconfig.MeetsFloor(after, before, direction) {
 		if err := markSpecUnconfirmed(path, field, before, after, stdout, stderr); err != nil {
 			_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 			return 1
