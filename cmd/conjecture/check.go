@@ -96,6 +96,10 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
+	if err := contextengine.EnsureSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
 
 	sb := &sandbox.Sandbox{}
 	ctx := context.Background()
@@ -422,6 +426,15 @@ func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, level con
 			lawWeight, err := contextengine.GatedWeight(evidenceledger.Low, true, nil)
 			if err != nil {
 				_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR computing law weight: %v\n", compositeID, h.Name, err)
+				break
+			}
+			// Record the gated weight in the context graph too, not
+			// only use it in-process for the promotion check below -
+			// otherwise "conjecture graph inspect" could never report
+			// a law's weight the specification's own "Axes reported
+			// separately" scenario asks for.
+			if err := contextengine.SetWeight(db, hypothesisID, lawWeight); err != nil {
+				_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR recording context graph weight: %v\n", compositeID, h.Name, err)
 				break
 			}
 			total, err := userdefinedlaws.AddFailureFreeCases(db, hypothesisID, caseCount)

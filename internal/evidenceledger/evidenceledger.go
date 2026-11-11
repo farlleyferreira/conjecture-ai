@@ -90,6 +90,41 @@ var weightCriteria = map[Weight]struct {
 	Critical: {RequiredCases: 3000, MaxViolationPercent: 0.1},
 }
 
+// String renders w the same way every other enum this codebase signs
+// or prints spells itself out (see e.g. teamconfig.Direction.String()):
+// lowercase, matching the specification's own wording ("weighted
+// critical", "weighted high or above").
+func (w Weight) String() string {
+	switch w {
+	case Low:
+		return "low"
+	case Medium:
+		return "medium"
+	case High:
+		return "high"
+	case Critical:
+		return "critical"
+	default:
+		return "unknown weight"
+	}
+}
+
+// ParseWeight parses s's [Weight.String] form back into a Weight.
+func ParseWeight(s string) (Weight, error) {
+	switch s {
+	case "low":
+		return Low, nil
+	case "medium":
+		return Medium, nil
+	case "high":
+		return High, nil
+	case "critical":
+		return Critical, nil
+	default:
+		return 0, fmt.Errorf("evidenceledger: %q is not a recognized weight", s)
+	}
+}
+
 // RequiredCases returns the number of failure-free cases w requires
 // before a hypothesis at that weight may be considered for promotion.
 func (w Weight) RequiredCases() int {
