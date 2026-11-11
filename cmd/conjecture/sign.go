@@ -49,24 +49,50 @@ func runSign(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if userName == "" {
-		u, err := user.Current()
+		u, err := currentOSUser()
 		if err != nil {
 			_, _ = fmt.Fprintln(stderr, "conjecture: --user not given and the OS user could not be determined")
 			return 1
 		}
-		userName = u.Username
+		userName = u
 	}
 
-	raw, err := os.ReadFile(path)
-	if err != nil {
+	if err := resignInPlace(path, userName, confirmed); err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
+	}
+
+	_, _ = fmt.Fprintf(stdout, "signed %s (user %s, confirmed %v)\n", path, userName, confirmed)
+	return 0
+}
+
+// currentOSUser reports the current OS user's username - the fallback
+// "conjecture sign" itself already used when --user is not given,
+// factored out so another caller (markSpecUnconfirmed) can use the
+// same fallback for its own, non-human-initiated re-signing.
+func currentOSUser() (string, error) {
+	u, err := user.Current()
+	if err != nil {
+		return "", err
+	}
+	return u.Username, nil
+}
+
+// resignInPlace re-signs path's .cjtr content in place (see
+// [cjtr.Sign]): reads the file, replaces any existing "signed" block
+// with a new one recording userName, this binary's own version as
+// "tool", today's date, and confirmed, and writes the result back to
+// path. It refuses - leaving path untouched - exactly when
+// [cjtr.Sign] itself does (an unresolved "???" marker).
+func resignInPlace(path, userName string, confirmed bool) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
 	}
 
 	root, err := yamlstrict.Load(bytes.NewReader(raw))
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
-		return 1
+		return err
 	}
 
 	tool := "conjecture-cli " + version.String()
@@ -74,15 +100,8 @@ func runSign(args []string, stdout, stderr io.Writer) int {
 
 	signed, err := cjtr.Sign(raw, root, userName, tool, date, confirmed)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
-		return 1
+		return err
 	}
 
-	if err := os.WriteFile(path, signed, 0o644); err != nil {
-		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
-		return 1
-	}
-
-	_, _ = fmt.Fprintf(stdout, "signed %s (user %s, confirmed %v)\n", path, userName, confirmed)
-	return 0
+	return os.WriteFile(path, signed, 0o644)
 }

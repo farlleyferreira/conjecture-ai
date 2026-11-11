@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -172,6 +173,120 @@ func TestRunOptimizeCalibrate_MissingProposalIsUsageError(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "usage:") {
 		t.Errorf("stderr should contain a usage message, got %q", stderr.String())
+	}
+}
+
+func TestMarkSpecUnconfirmed_WritesConfirmedFalse(t *testing.T) {
+	path := writeSettingsFixture(t, settingsFixture)
+
+	var stdout, stderr bytes.Buffer
+	if err := markSpecUnconfirmed(path, "work_max_attempts_per_item", 10, 5, &stdout, &stderr); err != nil {
+		t.Fatalf("markSpecUnconfirmed returned unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "10 -> 5") {
+		t.Errorf("stdout should report the before/after values, got %q", stdout.String())
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading file: %v", err)
+	}
+	if !strings.Contains(string(content), "confirmed: false") {
+		t.Errorf("file should be re-signed with confirmed: false, got:\n%s", content)
+	}
+}
+
+func TestRunOptimizeCalibrate_LoweringRigorMarksSpecUnconfirmed(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	settingsPath := writeSettingsFixture(t, settingsFixture)
+
+	var stdout, stderr bytes.Buffer
+	if code := runOptimize([]string{"set-current", "work_max_attempts_per_item", "10"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("seeding set-current failed: exit code %d; stderr:\n%s", code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code := runOptimize([]string{"calibrate", settingsPath, "work_max_attempts_per_item", "--proposal", "5", "--approved"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("calibrate returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "confirmed: false") {
+		t.Errorf("stdout should report the spec marked unconfirmed, got:\n%s", stdout.String())
+	}
+
+	content, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("reading settings file: %v", err)
+	}
+	if !strings.Contains(string(content), "confirmed: false") {
+		t.Errorf("settings.cjtr should be re-signed with confirmed: false (5 < 10, Higher direction), got:\n%s", content)
+	}
+}
+
+func TestRunOptimizeCalibrate_RaisingRigorDoesNotMarkUnconfirmed(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	settingsPath := writeSettingsFixture(t, settingsFixture)
+
+	var stdout, stderr bytes.Buffer
+	if code := runOptimize([]string{"set-current", "work_max_attempts_per_item", "3"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("seeding set-current failed: exit code %d; stderr:\n%s", code, stderr.String())
+	}
+
+	before, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("reading settings file: %v", err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code := runOptimize([]string{"calibrate", settingsPath, "work_max_attempts_per_item", "--proposal", "10", "--approved"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("calibrate returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "confirmed") {
+		t.Errorf("stdout should not mention confirmed for a rigor-raising calibration (10 > 3, Higher direction), got:\n%s", stdout.String())
+	}
+
+	after, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("reading settings file: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("settings.cjtr should be untouched by a rigor-raising calibration, got:\n%s", after)
+	}
+}
+
+func TestRunOptimizeCalibrate_NotApprovedDoesNotMarkUnconfirmed(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	settingsPath := writeSettingsFixture(t, settingsFixture)
+
+	var stdout, stderr bytes.Buffer
+	if code := runOptimize([]string{"set-current", "work_max_attempts_per_item", "10"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("seeding set-current failed: exit code %d; stderr:\n%s", code, stderr.String())
+	}
+
+	before, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("reading settings file: %v", err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code := runOptimize([]string{"calibrate", settingsPath, "work_max_attempts_per_item", "--proposal", "1"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("calibrate returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+
+	after, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("reading settings file: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("settings.cjtr should be untouched when the proposal is not approved (current never actually changes), got:\n%s", after)
 	}
 }
 
