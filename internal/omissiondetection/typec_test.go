@@ -27,6 +27,69 @@ func shippingTableFixture() (cjtr.Concept, map[string]cjtr.Concept, *cjtr.Table)
 	return tableConcept, concepts, table
 }
 
+// stateEventMatrixFixture is the same shape as shippingTableFixture,
+// except its by-keys are named "state" and "event" instead of
+// "region" and "weight" - CheckTypeC's own doc comment claims a
+// state/event matrix needs no code path of its own, only a table
+// concept whose by-keys happen to be named that way; this fixture
+// exercises that claim directly rather than leaving it as prose.
+func stateEventMatrixFixture() (cjtr.Concept, map[string]cjtr.Concept, *cjtr.Table) {
+	tableConcept := cjtr.Concept{
+		Name: "order lifecycle transitions", Kind: cjtr.TableConcept,
+		ByKeys: []string{"state", "event"},
+	}
+	concepts := map[string]cjtr.Concept{
+		"state": {Name: "state", Kind: cjtr.VariableConcept, Type: "text", OneOf: []string{"pending", "shipped"}},
+		"event": {Name: "event", Kind: cjtr.VariableConcept, Type: "text", OneOf: []string{"pay", "cancel"}},
+	}
+	table := &cjtr.Table{
+		Header: []string{"state", "event", "next state"},
+		Rows: [][]string{
+			{"pending", "pay", "shipped"},
+			{"pending", "cancel", "pending"},
+			{"shipped", "cancel", "shipped"},
+			// shipped/pay is deliberately missing - no rule says what
+			// happens on a second payment once already shipped.
+		},
+	}
+	return tableConcept, concepts, table
+}
+
+func TestCheckTypeC_StateEventMatrixMissingCellFlagged(t *testing.T) {
+	tableConcept, concepts, table := stateEventMatrixFixture()
+
+	omissions, found, err := CheckTypeC(tableConcept, concepts, table, 100)
+	if err != nil {
+		t.Fatalf("CheckTypeC returned unexpected error: %v", err)
+	}
+	if !found {
+		t.Fatal("found = false, want true (both by-keys are one_of, exhaustively enumerable)")
+	}
+	if len(omissions) != 1 {
+		t.Fatalf("len(omissions) = %d, want 1; omissions: %+v", len(omissions), omissions)
+	}
+	got := omissions[0].Keys
+	if got["state"] != "shipped" || got["event"] != "pay" {
+		t.Errorf("omissions[0].Keys = %v, want state=shipped event=pay", got)
+	}
+}
+
+func TestCheckTypeC_StateEventMatrixFullCoverageFindsNoOmission(t *testing.T) {
+	tableConcept, concepts, table := stateEventMatrixFixture()
+	table.Rows = append(table.Rows, []string{"shipped", "pay", "shipped"})
+
+	omissions, found, err := CheckTypeC(tableConcept, concepts, table, 100)
+	if err != nil {
+		t.Fatalf("CheckTypeC returned unexpected error: %v", err)
+	}
+	if !found {
+		t.Fatal("found = false, want true")
+	}
+	if len(omissions) != 0 {
+		t.Errorf("CheckTypeC = %+v, want no omissions (every state/event combination has a row)", omissions)
+	}
+}
+
 func TestCheckTypeC_MissingCellFlagged(t *testing.T) {
 	tableConcept, concepts, table := shippingTableFixture()
 

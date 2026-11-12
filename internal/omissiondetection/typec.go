@@ -12,21 +12,31 @@ type TypeCOmission struct {
 	Keys map[string]string
 }
 
-// CheckTypeC detects Type C omissions in a decision table - "Type C -
-// case not specified": "The system SHALL detect a case missing from a
-// decision table or a state/event matrix for a phenomenon... WHEN a
-// state/event matrix for a phenomenon has an empty cell with no
-// corresponding rule THEN the system flags it as a Type C omission."
+// CheckTypeC detects Type C omissions in a decision table or a
+// state/event matrix - "Type C - case not specified": "The system
+// SHALL detect a case missing from a decision table or a state/event
+// matrix for a phenomenon... WHEN a state/event matrix for a
+// phenomenon has an empty cell with no corresponding rule THEN the
+// system flags it as a Type C omission."
 //
-// This implements the decision-table half only: tableConcept (a
-// [cjtr.TableConcept], backed by table) with its own by-key concepts
-// (tableConcept.ByKeys) each exhaustively enumerated via [cjtr.
-// ExhaustiveValues], then every combination of those values checked
-// against table via [cjtr.Table.MatchCount]. The state/event-matrix
-// half needs a grammar this codebase does not have: nothing in the
-// cjtr-language grammar this package parses declares a "state" or an
-// "event", so there is nothing here to enumerate a matrix's own cells
-// from; this does not invent one.
+// A "state/event matrix" is not a distinct grammar from a decision
+// table in this codebase's own reading: nothing in the cjtr-language
+// grammar (or in either omission-detection's or spec-judge's own
+// specification text, which names both side by side with no worked
+// example of either) declares "state" or "event" as dedicated
+// concepts. A [cjtr.TableConcept]'s own by-key concepts are already
+// unrestricted in what they may represent - a project models "state"
+// and "event" the same way it would model "region" or "weight": as
+// plain one_of-valued concepts named in tableConcept.ByKeys. Reading
+// a state/event matrix this way - a decision table whose by-keys
+// happen to be named "state" and "event" - is the only one that does
+// not invent a second mechanism the specification gives no concrete
+// shape for, so CheckTypeC implements both at once, by construction,
+// rather than as two separate code paths: tableConcept (a [cjtr.
+// TableConcept], backed by table) with its own by-key concepts each
+// exhaustively enumerated via [cjtr.ExhaustiveValues], then every
+// combination of those values checked against table via [cjtr.Table.
+// MatchCount].
 //
 // found is false when at least one by-key concept's own domain is
 // not exhaustively enumerable ([cjtr.ExhaustiveValues]'s own "found" -
