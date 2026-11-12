@@ -10,7 +10,7 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 )
 
-const baseUsage = "usage: conjecture base add <path> --authority <norm|definition|reference|history> --scope <project|area:NAME> [--review-date <date>]\n       conjecture base search <query> [--area <name>]"
+const baseUsage = "usage: conjecture base add <path> --authority <norm|definition|reference|history> --scope <project|area:NAME> [--review-date <date>]\n       conjecture base search <query> [--area <name>] [--semantic]"
 
 // runBase implements "conjecture base <subcommand>": "add"
 // (knowledge-bases spec, "CLI-based base attachment") and "search"
@@ -108,6 +108,10 @@ func runBaseAdd(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
+	if err := knowledgebases.EnsureEmbeddingSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
 	if err := knowledgebases.IndexBase(db, stored); err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
@@ -122,27 +126,35 @@ func runBaseAdd(args []string, stdout, stderr io.Writer) int {
 }
 
 // runBaseSearch implements "conjecture base search <query> [--area
-// <name>]" - knowledge-bases' "Local indexing for retrieval" textual-
-// search half, over whatever every "conjecture base add" has indexed
+// <name>] [--semantic]" - knowledge-bases' "Local indexing for
+// retrieval", over whatever every "conjecture base add" has indexed
 // so far. --area restricts results to bases "Scoped application"
 // treats as applying to that area (project-scoped, or scoped to that
 // exact area - see [knowledgebases.InScope]); omitting it searches
 // every indexed base regardless of scope, the same unscoped behavior
-// this command has always had.
+// this command has always had. --semantic switches from the textual-
+// search half ([knowledgebases.Search]) to the quantized-embeddings
+// half ([knowledgebases.EmbeddingSearch]) - see that function's own
+// doc comment for what "semantic" honestly does and does not mean
+// here.
 func runBaseSearch(args []string, stdout, stderr io.Writer) int {
 	var query, area string
+	var semantic bool
 	var positional []string
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--area" {
+		switch args[i] {
+		case "--area":
 			i++
 			if i >= len(args) {
 				_, _ = fmt.Fprintln(stderr, baseUsage)
 				return 1
 			}
 			area = args[i]
-			continue
+		case "--semantic":
+			semantic = true
+		default:
+			positional = append(positional, args[i])
 		}
-		positional = append(positional, args[i])
 	}
 	if len(positional) != 1 {
 		_, _ = fmt.Fprintln(stderr, baseUsage)
@@ -157,31 +169,45 @@ func runBaseSearch(args []string, stdout, stderr io.Writer) int {
 	}
 	defer func() { _ = db.Close() }()
 
-	return searchBases(db, query, area, stdout, stderr)
+	return searchBases(db, query, area, semantic, stdout, stderr)
 }
 
 // searchBases is "conjecture base search"'s store-independent half, so
 // a test can exercise it against a temporary store instead of the
 // real per-OS one [persistence.OpenStore] always resolves to. An empty
-// area searches unscoped ([knowledgebases.Search]); a non-empty one
-// restricts results to bases in scope for it
-// ([knowledgebases.SearchInScope]).
-func searchBases(db *sql.DB, query, area string, stdout, stderr io.Writer) int {
+// area searches unscoped ([knowledgebases.Search]/[knowledgebases.
+// EmbeddingSearch]); a non-empty one restricts results to bases in
+// scope for it ([knowledgebases.SearchInScope]/[knowledgebases.
+// EmbeddingSearchInScope]). semantic picks which of the two retrieval
+// mechanisms runs; a caller never gets both blended into one ranking,
+// since the specification gives no rule for combining them.
+func searchBases(db *sql.DB, query, area string, semantic bool, stdout, stderr io.Writer) int {
 	if err := knowledgebases.EnsureSearchSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	if err := knowledgebases.EnsureEmbeddingSchema(db); err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
 
 	var results []knowledgebases.SearchResult
 	var err error
-	if area == "" {
+	switch {
+	case area == "" && !semantic:
 		results, err = knowledgebases.Search(db, query)
-	} else {
+	case area == "" && semantic:
+		results, err = knowledgebases.EmbeddingSearch(db, query)
+	default:
 		if err := knowledgebases.EnsureSchema(db); err != nil {
 			_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 			return 1
 		}
-		results, err = knowledgebases.SearchInScope(db, query, area)
+		if semantic {
+			results, err = knowledgebases.EmbeddingSearchInScope(db, query, area)
+		} else {
+			results, err = knowledgebases.SearchInScope(db, query, area)
+		}
 	}
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
