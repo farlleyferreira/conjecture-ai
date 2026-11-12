@@ -42,8 +42,11 @@ const mcpUsage = "usage: conjecture mcp"
 // the named-disallowed ones are enforced by omission - there is no
 // tool on this server that writes evidence, confirms a specification,
 // or changes a weight, not a runtime check that would reject such a
-// call. The folder-watch channel and the rigor-reducing-action rule
-// are real, separate, disclosed gaps this slice does not attempt.
+// call. The folder-watch channel ("conjecture watch", watch.go) and
+// the rigor-reducing-action rule ("conjecture optimize calibrate"
+// marking a settings.cjtr file unconfirmed, see optimize.go) are both
+// wired elsewhere in this CLI now, not gaps this slice still leaves
+// open.
 func runMCP(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
 		_, _ = fmt.Fprintln(stderr, mcpUsage)
