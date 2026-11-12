@@ -42,6 +42,8 @@ func New(provider string) (Client, error) {
 		return newAnthropicClient()
 	case "deepseek":
 		return newDeepSeekClient()
+	case "llamacpp":
+		return newLlamaCppClient()
 	default:
 		return nil, fmt.Errorf("llmclient: unrecognized provider %q", provider)
 	}
