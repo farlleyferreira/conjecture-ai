@@ -73,6 +73,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runAttack(args[1:], stdout, stderr)
 	case "deps":
 		return runDeps(args[1:], stdout, stderr)
+	case "promote":
+		return runPromote(args[1:], stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "unknown command: %s\n", args[0])
 		return 1

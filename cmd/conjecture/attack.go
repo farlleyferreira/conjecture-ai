@@ -195,9 +195,21 @@ func attackHypothesis(ctx context.Context, db *sql.DB, f loadedFicha, hypothesis
 		return 1
 	}
 
+	// Carries forward whatever stage this hypothesis already stands
+	// at - the same "stage = previous.Stage" rule check.go's own
+	// recordEvidence already applies - rather than leaving Stage at
+	// its zero value (Hypothesis), which would silently demote a
+	// hypothesis already at Thesis or beyond every time an attack is
+	// recorded against it.
+	stage := evidenceledger.Hypothesis
+	if len(history) > 0 {
+		stage = history[len(history)-1].Stage
+	}
+
 	specVersion := fmt.Sprintf("%x", sha256.Sum256(f.raw))
 	evidence := evidenceledger.Evidence{
 		HypothesisID: compositeID,
+		Stage:        stage,
 		ProducedBy:   adversarialSLMProducedBy,
 		ValidityHash: evidenceledger.ValidityHash(specVersion, "", version.String(), slmLabel, ""),
 	}

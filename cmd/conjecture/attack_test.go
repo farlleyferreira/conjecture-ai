@@ -283,3 +283,32 @@ func TestAttackHypothesis_RunnerErrorIsError(t *testing.T) {
 		t.Errorf("len(history) = %d, want 0 (nothing should be recorded when the attack itself failed)", len(history))
 	}
 }
+
+func TestAttackHypothesis_CarriesForwardTheCurrentStage(t *testing.T) {
+	f, err := loadFicha(writeCheckFixture(t))
+	if err != nil {
+		t.Fatalf("loadFicha returned unexpected error: %v", err)
+	}
+	db := openCheckTestStore(t)
+	const id = "demo-area::demo::shipping-rule::fee-matches"
+	if _, err := evidenceledger.Append(db, evidenceledger.Evidence{
+		HypothesisID: id, Stage: evidenceledger.Thesis, ValidityHash: []byte("v"),
+	}); err != nil {
+		t.Fatalf("Append returned unexpected error: %v", err)
+	}
+	runner := &fakeAttackRunner{output: adversarialslm.AttackOutput{Outcome: adversarialslm.NoViolationFound}}
+
+	var stdout, stderr bytes.Buffer
+	code := attackHypothesis(context.Background(), db, f, "fee-matches", runner, "test-model", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("attackHypothesis returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+
+	latest, found, err := evidenceledger.Latest(db, id)
+	if err != nil {
+		t.Fatalf("Latest returned unexpected error: %v", err)
+	}
+	if !found || latest.Stage != evidenceledger.Thesis {
+		t.Errorf("latest stage = %v (found=%v), want Thesis carried forward, not reset to Hypothesis", latest.Stage, found)
+	}
+}
