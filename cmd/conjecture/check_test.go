@@ -14,6 +14,7 @@ import (
 
 	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
 	"github.com/farlleyferreira/conjecture-ai/internal/conformancecycle"
+	"github.com/farlleyferreira/conjecture-ai/internal/contextcomposition"
 	"github.com/farlleyferreira/conjecture-ai/internal/contextengine"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
@@ -151,6 +152,71 @@ func openCheckTestStore(t *testing.T) *sql.DB {
 		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
 	}
 	return db
+}
+
+func TestSyncCheckContext_CreatesContextWithArea(t *testing.T) {
+	db := openCheckTestStore(t)
+	f := loadedFicha{phenomenonID: "checkout", area: "web", raw: []byte("content v1")}
+
+	if err := syncCheckContext(db, f); err != nil {
+		t.Fatalf("syncCheckContext returned unexpected error: %v", err)
+	}
+
+	ctx, err := contextcomposition.GetContext(db, "checkout")
+	if err != nil {
+		t.Fatalf("GetContext returned unexpected error: %v", err)
+	}
+	if ctx.Area != "web" {
+		t.Errorf("GetContext(checkout).Area = %q, want \"web\"", ctx.Area)
+	}
+
+	latest, err := contextcomposition.LatestVersion(db, "checkout")
+	if err != nil {
+		t.Fatalf("LatestVersion returned unexpected error: %v", err)
+	}
+	if latest.Content != "content v1" {
+		t.Errorf("LatestVersion.Content = %q, want %q", latest.Content, "content v1")
+	}
+}
+
+func TestSyncCheckContext_AddsNewVersionOnContentChange(t *testing.T) {
+	db := openCheckTestStore(t)
+	f := loadedFicha{phenomenonID: "checkout", area: "web", raw: []byte("content v1")}
+	if err := syncCheckContext(db, f); err != nil {
+		t.Fatalf("first syncCheckContext returned unexpected error: %v", err)
+	}
+
+	f.raw = []byte("content v2")
+	if err := syncCheckContext(db, f); err != nil {
+		t.Fatalf("second syncCheckContext returned unexpected error: %v", err)
+	}
+
+	latest, err := contextcomposition.LatestVersion(db, "checkout")
+	if err != nil {
+		t.Fatalf("LatestVersion returned unexpected error: %v", err)
+	}
+	if latest.Seq != 2 || latest.Content != "content v2" {
+		t.Errorf("LatestVersion = %+v, want seq 2 with content %q", latest, "content v2")
+	}
+}
+
+func TestSyncCheckContext_NoDuplicateVersionWhenContentUnchanged(t *testing.T) {
+	db := openCheckTestStore(t)
+	f := loadedFicha{phenomenonID: "checkout", area: "web", raw: []byte("content v1")}
+	if err := syncCheckContext(db, f); err != nil {
+		t.Fatalf("first syncCheckContext returned unexpected error: %v", err)
+	}
+	if err := syncCheckContext(db, f); err != nil {
+		t.Fatalf("second syncCheckContext (identical content) returned unexpected error: %v", err)
+	}
+
+	latest, err := contextcomposition.LatestVersion(db, "checkout")
+	if err != nil {
+		t.Fatalf("LatestVersion returned unexpected error: %v", err)
+	}
+	if latest.Seq != 1 {
+		t.Errorf("LatestVersion.Seq = %d after a repeated identical check, want 1 (no duplicate version)", latest.Seq)
+	}
 }
 
 func TestRunCheck_TooFewArguments(t *testing.T) {

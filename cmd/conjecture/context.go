@@ -25,13 +25,15 @@ const contextUsage = "usage: conjecture context <list|resume|open|restore|resolv
 // signing this codebase does not yet compose together, not just a
 // store lookup.
 //
-// This surface also does not implement "list"/"search" filtering by
-// area, date, or tags (the same table: "lists by name, area, date and
-// tags"), since nothing stores an area or tags for a context yet - see
-// [contextcomposition.Context]. This is a real, named gap, not an
-// oversight: it would need its own grounded design, the same way
-// origin/diff's did when they were deferred out of the storage PR this
-// builds on.
+// "list" now also filters by area and by a created-at date range (see
+// contextList's own doc comment) - area is auto-derived, not asked of
+// the operator, now that "conjecture check" (see check.go's own
+// syncCheckContext) is this codebase's first real context-creating
+// caller. "tags" ("the same table: 'lists by name, area, date and
+// tags'") is deliberately not attempted: with exactly one context-
+// creating path in this codebase, a tag naming "which command created
+// this" could never take more than one value, which is not a filter
+// worth building ahead of a second value actually existing.
 //
 // "resume" now also answers the table's other stated half of what it
 // does - the next work to pick up - by reporting [workqueue.Next]'s
@@ -42,13 +44,6 @@ const contextUsage = "usage: conjecture context <list|resume|open|restore|resolv
 // names, and nothing says resuming should also consume queue state -
 // a caller still removes the item via "conjecture queue next" once
 // they act on it.
-//
-// There is also no "conjecture context" command to create a context or
-// add a version in the first place - the product proposal's own
-// command table names no such verb. A context's rows are created by
-// whatever eventually drives this (a conformance cycle, say) calling
-// [contextcomposition.CreateContext]/[contextcomposition.AddVersion]
-// directly, not by this CLI surface.
 //
 // "resolve-conflict" wires [contextcomposition.ResolveConflict] -
 // PrecedenceOrder's own conflict rule, unused by any command until
@@ -91,7 +86,7 @@ func runContext(args []string, stdout, stderr io.Writer) int {
 
 	switch subcommand {
 	case "list":
-		return contextList(db, stdout, stderr)
+		return contextList(db, rest, stdout, stderr)
 	case "resume":
 		return contextResume(db, rest, stdout, stderr)
 	case "open":
@@ -106,11 +101,48 @@ func runContext(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-// contextList implements "conjecture context list" - "Ver o que
-// existe" / "Lista por nome, área, data e etiquetas" (see this file's
-// own doc comment for what is and is not implemented of that).
-func contextList(db *sql.DB, stdout, stderr io.Writer) int {
-	contexts, err := contextcomposition.ListContexts(db)
+// contextList implements "conjecture context list [--area <area>]
+// [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>]" - "Ver o que existe" /
+// "Lista por nome, área, data e etiquetas" (see this file's own doc
+// comment for what is and is not implemented of that: area and date,
+// not tags). --since/--until are inclusive, parsed as whole UTC days
+// (--since at 00:00:00, --until at 23:59:59.999999999), since
+// CreatedAt carries no timezone of its own for an operator to reason
+// about more precisely.
+func contextList(db *sql.DB, args []string, stdout, stderr io.Writer) int {
+	usage := "usage: conjecture context list [--area <area>] [--since <YYYY-MM-DD>] [--until <YYYY-MM-DD>]"
+	var filter contextcomposition.ContextFilter
+	for i := 0; i < len(args); i++ {
+		if i+1 >= len(args) {
+			_, _ = fmt.Fprintln(stderr, usage)
+			return 1
+		}
+		flag, value := args[i], args[i+1]
+		i++
+		switch flag {
+		case "--area":
+			filter.Area = value
+		case "--since":
+			t, err := time.Parse("2006-01-02", value)
+			if err != nil {
+				_, _ = fmt.Fprintf(stderr, "conjecture: --since: %v\n", err)
+				return 1
+			}
+			filter.Since = t
+		case "--until":
+			t, err := time.Parse("2006-01-02", value)
+			if err != nil {
+				_, _ = fmt.Fprintf(stderr, "conjecture: --until: %v\n", err)
+				return 1
+			}
+			filter.Until = t.Add(24*time.Hour - time.Nanosecond)
+		default:
+			_, _ = fmt.Fprintln(stderr, usage)
+			return 1
+		}
+	}
+
+	contexts, err := contextcomposition.ListContextsFiltered(db, filter)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
@@ -121,6 +153,9 @@ func contextList(db *sql.DB, stdout, stderr io.Writer) int {
 	}
 	for _, c := range contexts {
 		_, _ = fmt.Fprintf(stdout, "%s\t%s", c.ID, c.State)
+		if c.Area != "" {
+			_, _ = fmt.Fprintf(stdout, "\t%s", c.Area)
+		}
 		if c.State == contextcomposition.Archived && c.SupersededBy != "" {
 			_, _ = fmt.Fprintf(stdout, " (superseded by %s)", c.SupersededBy)
 		}

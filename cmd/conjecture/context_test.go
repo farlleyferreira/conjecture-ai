@@ -26,6 +26,52 @@ func openTestContextStore(t *testing.T) *sql.DB {
 	return db
 }
 
+func TestContextList_AreaFlagFiltersByArea(t *testing.T) {
+	db := openTestContextStore(t)
+	if _, err := contextcomposition.CreateContext(db, "checkout", "web"); err != nil {
+		t.Fatalf("CreateContext(checkout) returned unexpected error: %v", err)
+	}
+	if _, err := contextcomposition.CreateContext(db, "cart", "mobile"); err != nil {
+		t.Fatalf("CreateContext(cart) returned unexpected error: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := contextList(db, []string{"--area", "web"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("contextList returned exit code %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "checkout") {
+		t.Errorf("stdout = %q, want it to mention \"checkout\"", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "cart") {
+		t.Errorf("stdout = %q, want it to NOT mention \"cart\" (different area)", stdout.String())
+	}
+}
+
+func TestContextList_MalformedSinceIsError(t *testing.T) {
+	db := openTestContextStore(t)
+	var stdout, stderr bytes.Buffer
+	code := contextList(db, []string{"--since", "not-a-date"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("contextList with a malformed --since: exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "--since") {
+		t.Errorf("stderr should mention --since, got %q", stderr.String())
+	}
+}
+
+func TestContextList_UnknownFlagIsUsageError(t *testing.T) {
+	db := openTestContextStore(t)
+	var stdout, stderr bytes.Buffer
+	code := contextList(db, []string{"--bogus", "x"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("contextList with an unknown flag: exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "usage:") {
+		t.Errorf("stderr should contain a usage message, got %q", stderr.String())
+	}
+}
+
 func TestRunContext_NoArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runContext(nil, &stdout, &stderr)
@@ -51,7 +97,7 @@ func TestRunContext_UnknownSubcommand(t *testing.T) {
 func TestContextList_NoContexts(t *testing.T) {
 	db := openTestContextStore(t)
 	var stdout, stderr bytes.Buffer
-	code := contextList(db, &stdout, &stderr)
+	code := contextList(db, nil, &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("contextList on an empty store: exit code = %d, want 0", code)
 	}
@@ -62,7 +108,7 @@ func TestContextList_NoContexts(t *testing.T) {
 
 func TestContextList_ReportsStateAndSupersededBy(t *testing.T) {
 	db := openTestContextStore(t)
-	if _, err := contextcomposition.CreateContext(db, "checkout"); err != nil {
+	if _, err := contextcomposition.CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 	if _, err := contextcomposition.ArchiveContext(db, "checkout", "new-checkout"); err != nil {
@@ -70,7 +116,7 @@ func TestContextList_ReportsStateAndSupersededBy(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := contextList(db, &stdout, &stderr)
+	code := contextList(db, nil, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("contextList returned exit code %d, stderr: %s", code, stderr.String())
 	}
@@ -84,7 +130,7 @@ func TestContextList_ReportsStateAndSupersededBy(t *testing.T) {
 
 func TestContextResume_ReturnsLatestVersionContent(t *testing.T) {
 	db := openTestContextStore(t)
-	if _, err := contextcomposition.CreateContext(db, "checkout"); err != nil {
+	if _, err := contextcomposition.CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 	if _, err := contextcomposition.AddVersion(db, "checkout", "old state"); err != nil {
@@ -109,7 +155,7 @@ func TestContextResume_ReturnsLatestVersionContent(t *testing.T) {
 
 func TestContextResume_ReportsEmptyQueue(t *testing.T) {
 	db := openTestContextStore(t)
-	if _, err := contextcomposition.CreateContext(db, "checkout"); err != nil {
+	if _, err := contextcomposition.CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 	if _, err := contextcomposition.AddVersion(db, "checkout", "state"); err != nil {
@@ -128,7 +174,7 @@ func TestContextResume_ReportsEmptyQueue(t *testing.T) {
 
 func TestContextResume_ReportsHighestPriorityQueueItem(t *testing.T) {
 	db := openTestContextStore(t)
-	if _, err := contextcomposition.CreateContext(db, "checkout"); err != nil {
+	if _, err := contextcomposition.CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 	if _, err := contextcomposition.AddVersion(db, "checkout", "state"); err != nil {
@@ -186,7 +232,7 @@ func TestContextResume_WrongArgCount(t *testing.T) {
 
 func TestContextOpen_ReturnsTheExactVersionAsked(t *testing.T) {
 	db := openTestContextStore(t)
-	if _, err := contextcomposition.CreateContext(db, "checkout"); err != nil {
+	if _, err := contextcomposition.CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 	if _, err := contextcomposition.AddVersion(db, "checkout", "v1 state"); err != nil {
@@ -220,7 +266,7 @@ func TestContextOpen_MalformedRef(t *testing.T) {
 
 func TestContextOpen_NoVersionGiven(t *testing.T) {
 	db := openTestContextStore(t)
-	if _, err := contextcomposition.CreateContext(db, "checkout"); err != nil {
+	if _, err := contextcomposition.CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 
@@ -233,7 +279,7 @@ func TestContextOpen_NoVersionGiven(t *testing.T) {
 
 func TestContextRestore_ArchivedContextBecomesActive(t *testing.T) {
 	db := openTestContextStore(t)
-	if _, err := contextcomposition.CreateContext(db, "checkout"); err != nil {
+	if _, err := contextcomposition.CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 	if _, err := contextcomposition.ArchiveContext(db, "checkout", "new-checkout"); err != nil {
@@ -260,7 +306,7 @@ func TestContextRestore_ArchivedContextBecomesActive(t *testing.T) {
 
 func TestContextRestore_NotArchivedIsError(t *testing.T) {
 	db := openTestContextStore(t)
-	if _, err := contextcomposition.CreateContext(db, "checkout"); err != nil {
+	if _, err := contextcomposition.CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 
