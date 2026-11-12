@@ -6,13 +6,13 @@
 // it."
 //
 // This package only implements that comparison, as a generic primitive
-// over whatever ordered value a setting happens to be. It does not parse
-// settings.cjtr itself: the specification gives no worked example of
-// that file's content, so this does not invent a concrete settings
-// schema to go with the comparison rule. It also does not implement
-// settings.cjtr's signature or local-compilation requirements, both of
-// which depend on a general .cjtr signing/compilation mechanism this
-// codebase has not built for any .cjtr file yet, team settings included.
+// over whatever ordered value a setting happens to be. It does not
+// parse settings.cjtr itself, or apply its own signature/local-
+// compilation requirements - that is cmd/conjecture/settings.go's own
+// concern, reusing the same cjtr-wide signing pipeline (internal/cjtr/
+// signing.go) every other signed .cjtr file already goes through.
+// This package stays a generic comparison primitive, deliberately
+// independent of any one concrete settings schema.
 package teamconfig
 
 import "fmt"

@@ -4,14 +4,15 @@ package hardwarescheduler
 // background-verification work should be deferred right now, given
 // the caller-supplied facts about current load. Measuring
 // systemUnderTestLoad and userActive themselves is an OS-level
-// concern this package does not have an opinion on - same as
+// concern this function itself does not have an opinion on - same as
 // [CheckMinimumRAM] separates the real RAM reading (memory.TotalMemory)
-// from its own pure threshold check ([checkRAM]) - no caller in this
-// codebase measures either yet (nothing here runs the adversarial-SLM
-// attack loop or a background verification pass from a real
-// invocation to have load to measure), so this is only the policy two
-// of the specification's own requirements state once real
-// measurements exist to feed it:
+// from its own pure threshold check ([checkRAM]). userActive is now
+// measured for real by this same package (cpuload.go) and wired into
+// "conjecture watch"; systemUnderTestLoad still is not (see ram.go's
+// own doc comment for why). This is the policy two of the
+// specification's own requirements state, regardless of which of its
+// two inputs a given caller can actually supply a real measurement
+// for yet:
 //
 //   - "Mutual exclusion between SLM and system-under-test load": "the
 //     system defers heavy adversarial SLM work rather than running
