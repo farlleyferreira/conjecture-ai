@@ -15,9 +15,9 @@ import (
 )
 
 const swarmUsage = "usage: conjecture swarm attack <file.cjtr> <hypothesis-id> --mode <off|attackers-only|attackers-plus-auditors> --budget <N>\n" +
-	"       --attacker <family>|<runtime>|<model> (repeated, at least " +
+	"       --attacker <family>|<runtime>|<model>[|<base-url>] (repeated, at least " +
 	"5)\n" +
-	"       [--auditor <family>|<runtime>|<model> (repeated, required for attackers-plus-auditors)]"
+	"       [--auditor <family>|<runtime>|<model>[|<base-url>] (repeated, required for attackers-plus-auditors)]"
 
 // swarmProducedBy is this command's own [evidenceledger.Evidence.
 // ProducedBy] label - distinct from [adversarialSLMProducedBy], since
@@ -65,17 +65,27 @@ func runSwarm(args []string, stdout, stderr io.Writer) int {
 
 // strategySpec is one --attacker/--auditor flag's own parsed value.
 type strategySpec struct {
-	family, runtime, model string
+	family, runtime, model, baseURL string
 }
 
-// parseStrategySpec parses "<family>|<runtime>|<model>" - family and
-// runtime are required, model may be empty (llamacpp needs none).
+// parseStrategySpec parses "<family>|<runtime>|<model>[|<base-url>]" -
+// family and runtime are required, model may be empty (llamacpp needs
+// none). base-url is optional and defaults to empty (each runner's own
+// standard local address, via [buildAttackRunner]) - without it, two
+// strategies that both name the same runtime (e.g. two "llamacpp"
+// strategies for two distinct local llama-server instances, each its
+// own genuinely different model) would have no way to address two
+// different local servers in the same swarm run.
 func parseStrategySpec(s string) (strategySpec, error) {
 	parts := strings.Split(s, "|")
-	if len(parts) != 3 || parts[0] == "" || parts[1] == "" {
-		return strategySpec{}, fmt.Errorf("%q is not \"<family>|<runtime>|<model>\"", s)
+	if len(parts) < 3 || len(parts) > 4 || parts[0] == "" || parts[1] == "" {
+		return strategySpec{}, fmt.Errorf("%q is not \"<family>|<runtime>|<model>[|<base-url>]\"", s)
 	}
-	return strategySpec{family: parts[0], runtime: parts[1], model: parts[2]}, nil
+	spec := strategySpec{family: parts[0], runtime: parts[1], model: parts[2]}
+	if len(parts) == 4 {
+		spec.baseURL = parts[3]
+	}
+	return spec, nil
 }
 
 // runSwarmAttack parses "attack"'s own arguments and loads the real
@@ -177,7 +187,7 @@ func runSwarmAttack(args []string, stdout, stderr io.Writer) int {
 	defer func() { _ = db.Close() }()
 
 	resolveRunner := func(spec strategySpec) (attackRunner, error) {
-		return buildAttackRunner(spec.runtime, spec.model, "")
+		return buildAttackRunner(spec.runtime, spec.model, spec.baseURL)
 	}
 	return swarmAttack(context.Background(), db, f, hypothesisID, mode, budget, attackers, auditors, resolveRunner, stdout, stderr)
 }
