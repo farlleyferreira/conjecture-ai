@@ -128,7 +128,7 @@ func TestRunBaseSearch_WrongArgCount(t *testing.T) {
 func TestSearchBases_NoMatchesReportsPlainly(t *testing.T) {
 	db := openTestKnowledgeStore(t)
 	var stdout, stderr bytes.Buffer
-	code := searchBases(db, "nothing indexed matches this", "", &stdout, &stderr)
+	code := searchBases(db, "nothing indexed matches this", "", false, &stdout, &stderr)
 	if code != 0 {
 		t.Errorf("searchBases with no matches = %d, want 0", code)
 	}
@@ -155,12 +155,15 @@ func TestSearchBases_FindsWhatWasRegisteredAndIndexed(t *testing.T) {
 	if err := knowledgebases.EnsureSearchSchema(db); err != nil {
 		t.Fatalf("EnsureSearchSchema returned unexpected error: %v", err)
 	}
+	if err := knowledgebases.EnsureEmbeddingSchema(db); err != nil {
+		t.Fatalf("EnsureEmbeddingSchema returned unexpected error: %v", err)
+	}
 	if err := knowledgebases.IndexBase(db, stored); err != nil {
 		t.Fatalf("IndexBase returned unexpected error: %v", err)
 	}
 
 	var searchOut, searchErr bytes.Buffer
-	code := searchBases(db, "exclusao", "", &searchOut, &searchErr)
+	code := searchBases(db, "exclusao", "", false, &searchOut, &searchErr)
 	if code != 0 {
 		t.Fatalf("searchBases = %d, want 0 (stderr: %q)", code, searchErr.String())
 	}
@@ -183,6 +186,9 @@ func TestSearchBases_AreaExcludesBaseFromADifferentArea(t *testing.T) {
 	if err := knowledgebases.EnsureSearchSchema(db); err != nil {
 		t.Fatalf("EnsureSearchSchema returned unexpected error: %v", err)
 	}
+	if err := knowledgebases.EnsureEmbeddingSchema(db); err != nil {
+		t.Fatalf("EnsureEmbeddingSchema returned unexpected error: %v", err)
+	}
 	if err := knowledgebases.IndexBase(db, shippingBase); err != nil {
 		t.Fatalf("IndexBase returned unexpected error: %v", err)
 	}
@@ -200,7 +206,7 @@ func TestSearchBases_AreaExcludesBaseFromADifferentArea(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := searchBases(db, "limite de peso", "shipping", &stdout, &stderr)
+	code := searchBases(db, "limite de peso", "shipping", false, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("searchBases = %d, want 0 (stderr: %q)", code, stderr.String())
 	}
@@ -219,6 +225,36 @@ func TestRunBaseSearch_AreaFlagParsed(t *testing.T) {
 	code := runBaseSearch([]string{"--area"}, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("runBaseSearch with --area and no value = %d, want 1", code)
+	}
+}
+
+func TestSearchBases_SemanticFindsWhatWasRegisteredAndIndexed(t *testing.T) {
+	db := openTestKnowledgeStore(t)
+	path := filepath.Join(t.TempDir(), "lgpd.txt")
+	if err := os.WriteFile(path, []byte("o titular pode solicitar a exclusao dos dados"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	stored, err := registerBase(db, path, "reference", "project", "")
+	if err != nil {
+		t.Fatalf("registerBase returned unexpected error: %v", err)
+	}
+	if err := knowledgebases.EnsureSearchSchema(db); err != nil {
+		t.Fatalf("EnsureSearchSchema returned unexpected error: %v", err)
+	}
+	if err := knowledgebases.EnsureEmbeddingSchema(db); err != nil {
+		t.Fatalf("EnsureEmbeddingSchema returned unexpected error: %v", err)
+	}
+	if err := knowledgebases.IndexBase(db, stored); err != nil {
+		t.Fatalf("IndexBase returned unexpected error: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := searchBases(db, "o titular pode solicitar a exclusao dos dados", "", true, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("searchBases(semantic) = %d, want 0 (stderr: %q)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), path) {
+		t.Errorf("search output = %q, want it to mention %q", stdout.String(), path)
 	}
 }
 

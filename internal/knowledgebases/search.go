@@ -14,10 +14,9 @@ import (
 // indexing for retrieval"'s textual-search half ("The system SHALL
 // index attached bases locally using both textual search and
 // quantized embeddings, without sending base content to a remote
-// service"). This is the textual-search half only: quantized
-// embeddings are not implemented here - they need an embedding model,
-// a real infra/library decision this package does not make on its
-// own.
+// service"). The quantized-embeddings half is [EnsureEmbeddingSchema]/
+// [Embed], its own separate schema and function - see that doc
+// comment for what this project's own "quantized embeddings" means.
 //
 // SQLite's own FTS5 virtual table extension does the indexing and
 // ranking itself, already available through modernc.org/sqlite - the
@@ -41,13 +40,17 @@ func EnsureSearchSchema(db *sql.DB) error {
 // IndexBase reads every regular file at b.Path - b.Path itself if it
 // names a single file, or every file under it if a directory, the
 // same "a file or a directory" shape [ComputeContentHash] already
-// handles - and indexes each one's text content for local full-text
-// search, replacing any previously indexed content for this base
-// first (so re-running "conjecture base add" on an already-registered
-// path never leaves stale entries behind it).
+// handles - and indexes each one's text content for both local
+// full-text search and quantized-embedding search ([storeEmbedding]),
+// replacing any previously indexed content and embeddings for this
+// base first (so re-running "conjecture base add" on an already-
+// registered path never leaves stale entries behind it).
 func IndexBase(db *sql.DB, b Base) error {
 	if _, err := db.Exec(`DELETE FROM knowledge_base_search WHERE base_id = ?`, b.ID); err != nil {
 		return fmt.Errorf("knowledgebases: clearing previous index for base %d: %w", b.ID, err)
+	}
+	if _, err := db.Exec(`DELETE FROM knowledge_base_embedding WHERE base_id = ?`, b.ID); err != nil {
+		return fmt.Errorf("knowledgebases: clearing previous embeddings for base %d: %w", b.ID, err)
 	}
 
 	info, err := os.Stat(b.Path)
@@ -60,11 +63,13 @@ func IndexBase(db *sql.DB, b Base) error {
 		if err != nil {
 			return err
 		}
-		_, err = db.Exec(
+		if _, err := db.Exec(
 			`INSERT INTO knowledge_base_search (base_id, file_path, content) VALUES (?, ?, ?)`,
 			b.ID, path, string(content),
-		)
-		return err
+		); err != nil {
+			return err
+		}
+		return storeEmbedding(db, b.ID, path, content)
 	}
 
 	if !info.IsDir() {

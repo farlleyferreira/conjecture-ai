@@ -22,6 +22,9 @@ func openSearchTestStore(t *testing.T) *sql.DB {
 	if err := EnsureSearchSchema(db); err != nil {
 		t.Fatalf("EnsureSearchSchema returned unexpected error: %v", err)
 	}
+	if err := EnsureEmbeddingSchema(db); err != nil {
+		t.Fatalf("EnsureEmbeddingSchema returned unexpected error: %v", err)
+	}
 	return db
 }
 
