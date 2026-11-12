@@ -120,6 +120,24 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 				exitCode = 1
 			}
 		}
+
+		// omission-detection's "Type B - case forgotten within the
+		// domain": checked once per group of sibling hypotheses (a
+		// rule's own hyps/laws, or the file-level laws), not per
+		// hypothesis - "addressed" is only meaningful against the set
+		// that is meant to jointly cover its own domain. See
+		// [omissiondetection.CheckTypeB]'s own doc comment for why this
+		// is the grouping it recommends.
+		omissions, err := omissiondetection.CheckTypeB(hyps, f.concepts, f.tables)
+		if err != nil {
+			_, _ = fmt.Fprintf(stdout, "%s: ERROR checking Type B omissions: %v\n", compositeID, err)
+			exitCode = 1
+			return
+		}
+		for _, o := range omissions {
+			_, _ = fmt.Fprintf(stdout, "%s: TYPE B OMISSION: %q's own boundary search found input %v that no hypothesis in this group addresses\n", compositeID, o.GeneratedFrom, o.Input)
+			exitCode = 1
+		}
 	}
 	runGroup(f.fileLaws, f.phenomenonID, true)
 
