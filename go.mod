@@ -8,6 +8,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	github.com/smacker/go-tree-sitter v0.0.0-20240827094217-dd81d9e9be82
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.37.1
 )
