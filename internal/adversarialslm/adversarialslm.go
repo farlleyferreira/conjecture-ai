@@ -1,10 +1,15 @@
 // Package adversarialslm implements pieces of the adversarial-slm
 // capability (openspec/specs/adversarial-slm/spec.md): default/reserve
 // selection by family and license, the grammar-constrained output
-// shape, and the blind-input boundary. It does not run any model -
-// "runs locally, on the same machine... with no network dependency" is
-// a property of an actual model invocation this codebase does not
-// perform yet.
+// shape, and the blind-input boundary - plus two real local runners,
+// [OllamaRunner] and [LlamaCppRunner], each calling a locally running
+// server over loopback only, satisfying "runs locally... with no
+// network dependency" for real. Wiring either one into a real
+// conformance-cycle attack phase, and SelectSLM's own default/reserve
+// configuration (which needs a real, configured notion of "the code-
+// generating model's family" nothing in this codebase tracks yet), is
+// cmd/conjecture's own concern (see cmd/conjecture/attack.go), not
+// this package's.
 package adversarialslm
 
 import (
