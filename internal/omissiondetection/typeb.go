@@ -52,10 +52,16 @@ type TypeBOmission struct {
 // A generated case counts as addressed when at least one hypothesis
 // in hypotheses actually applies to it: a universal hypothesis always
 // does (its own "always" clause has no given-condition branch to
-// fail), and a non-universal one does when every one of its own Given
-// statements both resolves and holds against the case (the "and"
-// combination [cjtr.Hypothesis.Given]'s own doc comment already
-// states). A Given statement that cannot even be resolved against a
+// fail); a conditional one with its own "otherwise" declared also
+// always does ("given X then Y otherwise Z" defines a result across
+// the Given's entire complement too, not only within it, so the
+// candidate is addressed via Otherwise even when Given is false); and
+// a conditional one with no Otherwise does only when every one of its
+// own Given statements both resolves and holds against the case (the
+// "and" combination [cjtr.Hypothesis.Given]'s own doc comment already
+// states) - that last case, a Given false with no Otherwise to fall
+// back on, is exactly the genuinely undefined gap Type B exists to
+// surface. A Given statement that cannot even be resolved against a
 // candidate - typically a concept this candidate's own generating
 // hypothesis never gave a baseline value for, because it belongs to a
 // sibling hypothesis's own worked example instead - is read as "does
@@ -99,9 +105,18 @@ func CheckTypeB(hypotheses []cjtr.Hypothesis, concepts map[string]cjtr.Concept, 
 // hypotheses applies to bindings - see [CheckTypeB]'s own doc comment
 // for what "applies" means for a universal versus a conditional
 // hypothesis.
+//
+// A conditional hypothesis that also declares "otherwise" applies
+// unconditionally, not only when its own Given holds: "given X then Y
+// otherwise Z" defines a result across its own Given's entire
+// complement too, not only within it, so a candidate where Given is
+// false is still addressed - by the Otherwise branch - whenever one
+// is declared. Only a conditional hypothesis with no Otherwise at all
+// leaves its Given's complement genuinely undefined, which is
+// exactly the gap Type B exists to surface.
 func addressedByAny(hypotheses []cjtr.Hypothesis, concepts map[string]cjtr.Concept, tables cjtr.Tables, bindings cjtr.Bindings) bool {
 	for _, h := range hypotheses {
-		if h.IsUniversal {
+		if h.IsUniversal || h.Otherwise != nil {
 			return true
 		}
 		if givenHolds(h, concepts, tables, bindings) {

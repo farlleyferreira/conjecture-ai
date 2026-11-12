@@ -64,6 +64,30 @@ func TestCheckTypeB_PartialRangeCoverageFlagsTheUncoveredBoundary(t *testing.T) 
 	}
 }
 
+func TestCheckTypeB_GivenThenOtherwiseCoversTheWholeDomain(t *testing.T) {
+	// A single hypothesis with "given X then Y otherwise Z" defines a
+	// result across its own Given's entire complement too, not only
+	// within it - this is the exact shape a real .cjtr file (a member-
+	// loyalty discount rule) surfaced as a false Type B omission
+	// before addressedByAny learned to read Otherwise as coverage.
+	concepts := rangedInputConcepts()
+	given := parseComparison(t, "the input value is at least 50.00", concepts)
+	then := parseComparison(t, "the output value is 1.00", concepts)
+	otherwise := parseComparison(t, "the output value is 0.00", concepts)
+	h := cjtr.Hypothesis{
+		Name: "with otherwise", Given: []cjtr.Statement{given}, Then: then, Otherwise: &otherwise,
+		Examples: []map[string]string{{"input value": "75.00", "output value": "1.00"}},
+	}
+
+	omissions, err := CheckTypeB([]cjtr.Hypothesis{h}, concepts, nil)
+	if err != nil {
+		t.Fatalf("CheckTypeB returned unexpected error: %v", err)
+	}
+	if len(omissions) != 0 {
+		t.Errorf("CheckTypeB = %+v, want no omissions (otherwise covers everything below 50.00 too)", omissions)
+	}
+}
+
 func TestCheckTypeB_FullRangeCoverageAcrossTwoHypothesesFindsNoOmission(t *testing.T) {
 	concepts := rangedInputConcepts()
 	lowGiven := parseComparison(t, "the input value is less than 50.00", concepts)
