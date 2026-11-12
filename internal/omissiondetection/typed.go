@@ -1,15 +1,14 @@
-// Package omissiondetection implements pieces of the omission-
-// detection capability (openspec/specs/omission-detection/spec.md):
-// the four classes of specification omission conjecture looks for.
-// Type D ("requirement nobody thought of", typed.go), Type A
-// ("asserted but not implemented", typea.go - conformance-cycle's own
-// directed-sampling run now provides real implementation evidence to
-// check against), Type B ("case forgotten within the domain",
-// typeb.go - reusing conformance-cycle's own directed-sampling
-// boundary generation as its property-based test generator), and Type
-// C ("case not specified", typec.go - its decision-table half only;
-// the state/event-matrix half needs a grammar this codebase does not
-// have) are implemented.
+// Package omissiondetection implements all four classes of
+// specification omission conjecture looks for (openspec/specs/
+// omission-detection/spec.md): Type D ("requirement nobody thought
+// of", typed.go), Type A ("asserted but not implemented", typea.go -
+// conformance-cycle's own directed-sampling run now provides real
+// implementation evidence to check against), Type B ("case forgotten
+// within the domain", typeb.go - reusing conformance-cycle's own
+// directed-sampling boundary generation as its property-based test
+// generator), and Type C ("case not specified", typec.go - a decision
+// table and a state/event matrix read as the same underlying
+// mechanism, see CheckTypeC's own doc comment for why).
 package omissiondetection
 
 // Catalog is a configurable list of requirement categories to check
