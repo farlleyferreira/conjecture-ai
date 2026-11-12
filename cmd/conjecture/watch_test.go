@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,7 +11,18 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/farlleyferreira/conjecture-ai/internal/hardwarescheduler"
 )
+
+// neverBusyCPUSample is a cpuSample stub reporting the same (zero)
+// sample every call - [hardwarescheduler.BusyFraction] of a sample
+// against itself is always 0 (a zero-length interval), so this never
+// defers a tick, keeping a test's own timing independent of whatever
+// CPU load the machine actually running it happens to have.
+func neverBusyCPUSample() (hardwarescheduler.CPUSample, error) {
+	return hardwarescheduler.CPUSample{}, nil
+}
 
 func TestRunWatch_NoArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -62,7 +74,7 @@ func TestRunWatchLoop_DetectsChangeAndStopsOnContextCancel(t *testing.T) {
 	var stderr bytes.Buffer
 	done := make(chan int, 1)
 	go func() {
-		done <- runWatchLoop(ctx, dir, 20*time.Millisecond, &stdout, &stderr)
+		done <- runWatchLoop(ctx, dir, 20*time.Millisecond, neverBusyCPUSample, &stdout, &stderr)
 	}()
 
 	// Give the baseline scan a moment to run before writing the file,
@@ -90,6 +102,104 @@ func TestRunWatchLoop_DetectsChangeAndStopsOnContextCancel(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("runWatchLoop did not return after the context was cancelled")
+	}
+}
+
+// TestRunWatchLoop_DefersScanWhenMachineIsBusy drives the real loop
+// with a cpuSample stub reporting a fully-busy interval on every
+// tick, confirms a change written during that time is never reported
+// (each tick defers instead), then flips the stub to fully-idle and
+// confirms the same change is finally reported once the loop is no
+// longer deferring.
+func TestRunWatchLoop_DefersScanWhenMachineIsBusy(t *testing.T) {
+	dir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	busy := true
+	var total, idle uint64
+	cpuSample := func() (hardwarescheduler.CPUSample, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		total += 100
+		if !busy {
+			idle += 100
+		}
+		return hardwarescheduler.CPUSample{Idle: idle, Total: total}, nil
+	}
+
+	var stdout syncBuffer
+	var stderr bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		done <- runWatchLoop(ctx, dir, 20*time.Millisecond, cpuSample, &stdout, &stderr)
+	}()
+
+	time.Sleep(60 * time.Millisecond)
+	path := filepath.Join(dir, "demo.cjtr")
+	if err := os.WriteFile(path, []byte(checkFixture), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	deadline := time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if strings.Contains(stdout.String(), "examples consistent") {
+			t.Fatal("runWatchLoop reported the change while the machine was reported busy")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(stdout.String(), "deferring this scan") {
+		t.Fatalf("runWatchLoop never reported deferring a scan while busy; stdout so far:\n%s", stdout.String())
+	}
+
+	mu.Lock()
+	busy = false
+	mu.Unlock()
+
+	deadline = time.Now().Add(2 * time.Second)
+	for !strings.Contains(stdout.String(), "examples consistent") {
+		if time.Now().After(deadline) {
+			t.Fatalf("runWatchLoop did not report the change after the machine became idle; stdout so far:\n%s", stdout.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Errorf("runWatchLoop exit code = %d, want 0", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runWatchLoop did not return after the context was cancelled")
+	}
+}
+
+func TestShouldDeferThisTick_BusyDefers(t *testing.T) {
+	prev := hardwarescheduler.CPUSample{Idle: 0, Total: 100}
+	cur := hardwarescheduler.CPUSample{Idle: 0, Total: 200} // fully busy
+	if !shouldDeferThisTick(prev, nil, cur, nil) {
+		t.Error("shouldDeferThisTick = false, want true (fully busy interval)")
+	}
+}
+
+func TestShouldDeferThisTick_NotBusyDoesNotDefer(t *testing.T) {
+	prev := hardwarescheduler.CPUSample{Idle: 0, Total: 100}
+	cur := hardwarescheduler.CPUSample{Idle: 100, Total: 200} // fully idle
+	if shouldDeferThisTick(prev, nil, cur, nil) {
+		t.Error("shouldDeferThisTick = true, want false (fully idle interval)")
+	}
+}
+
+func TestShouldDeferThisTick_MeasurementErrorNeverDefers(t *testing.T) {
+	prev := hardwarescheduler.CPUSample{Idle: 0, Total: 100}
+	cur := hardwarescheduler.CPUSample{Idle: 0, Total: 200} // would be fully busy
+	if shouldDeferThisTick(prev, errors.New("boom"), cur, nil) {
+		t.Error("shouldDeferThisTick = true, want false (prev measurement errored)")
+	}
+	if shouldDeferThisTick(prev, nil, cur, errors.New("boom")) {
+		t.Error("shouldDeferThisTick = true, want false (cur measurement errored)")
 	}
 }
 

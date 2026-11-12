@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/farlleyferreira/conjecture-ai/internal/hardwarescheduler"
 )
 
 const watchUsage = "usage: conjecture watch <dir> [--interval <duration>]"
@@ -67,14 +69,18 @@ func runWatch(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	return runWatchLoop(ctx, dir, interval, stdout, stderr)
+	return runWatchLoop(ctx, dir, interval, hardwarescheduler.CurrentCPUSample, stdout, stderr)
 }
 
 // runWatchLoop is runWatch's own real polling loop, factored out so a
 // test can drive it with a context it controls directly (cancelling
 // it to simulate the interrupt signal runWatch itself listens for)
 // instead of having to deliver a real OS signal to the test process.
-func runWatchLoop(ctx context.Context, dir string, interval time.Duration, stdout, stderr io.Writer) int {
+// cpuSample is likewise factored out - runWatch's own call passes
+// [hardwarescheduler.CurrentCPUSample], the real per-OS reading; a
+// test passes a deterministic stub instead, so its own timing never
+// depends on the actual machine's CPU load at the moment it runs.
+func runWatchLoop(ctx context.Context, dir string, interval time.Duration, cpuSample func() (hardwarescheduler.CPUSample, error), stdout, stderr io.Writer) int {
 	seen := make(map[string][32]byte)
 	// The first scan establishes a baseline silently - "folder-watch
 	// observation" is about detecting a *change*, not re-verifying
@@ -83,6 +89,7 @@ func runWatchLoop(ctx context.Context, dir string, interval time.Duration, stdou
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
+	prevCPU, prevErr := cpuSample()
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -91,11 +98,43 @@ func runWatchLoop(ctx context.Context, dir string, interval time.Duration, stdou
 		case <-ctx.Done():
 			return 0
 		case <-ticker.C:
+			curCPU, curErr := cpuSample()
+			shouldDefer := shouldDeferThisTick(prevCPU, prevErr, curCPU, curErr)
+			prevCPU, prevErr = curCPU, curErr
+
+			if shouldDefer {
+				_, _ = fmt.Fprintln(stdout, "watch: deferring this scan - machine is busy")
+				continue
+			}
 			if err := scanOnce(dir, seen, stdout, stderr); err != nil {
 				_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 			}
 		}
 	}
+}
+
+// shouldDeferThisTick reports whether runWatchLoop should skip this
+// tick's own scan - hardware-scheduler's own "Heavy work only on an
+// idle machine" ("the system SHALL NOT make the user's interactive
+// work feel slower as a result of background verification"), applied
+// via [hardwarescheduler.ShouldDeferHeavyWork] with this loop's own
+// CPU-busyness reading (see cpuload.go's own doc comment for why
+// overall CPU load, not literal input-idle detection, is this
+// package's chosen proxy for "userActive") as that policy's
+// userActive signal. systemUnderTestLoad is passed as false: nothing
+// in this command measures that fact, and false is the honest "not
+// known to be true" default, not a guess that it never applies.
+//
+// A measurement error on either sample (prevErr or curErr) never
+// defers: an unmeasurable load is read as "not busy," not as a
+// reason to stall watch's own verification over what is, even when
+// it works, only a best-effort signal.
+func shouldDeferThisTick(prevCPU hardwarescheduler.CPUSample, prevErr error, curCPU hardwarescheduler.CPUSample, curErr error) bool {
+	if prevErr != nil || curErr != nil {
+		return false
+	}
+	busy := hardwarescheduler.BusyFraction(prevCPU, curCPU) >= hardwarescheduler.CPUBusyThreshold
+	return hardwarescheduler.ShouldDeferHeavyWork(false, busy)
 }
 
 // parseWatchArgs parses runWatch's own arguments: the required
