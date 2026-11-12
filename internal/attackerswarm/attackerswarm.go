@@ -2,10 +2,13 @@
 // capability (openspec/specs/attacker-swarm/spec.md): the mode/family
 // validation, the multi-armed bandit budget allocator, and
 // deterministic finding aggregation. It does not run any attacking
-// agent - "no communication between attacking agents" is an
-// orchestration property of however agents are actually run, not
-// something this package's own pure functions can exercise, since no
-// agent runtime exists in this codebase yet.
+// agent itself - that is cmd/conjecture's own concern ("conjecture
+// swarm attack", swarm.go), dispatching through the same local-model
+// runners [adversarialslm] already provides. "No communication
+// between attacking agents" is an orchestration property of how that
+// caller actually runs agents (never threading one round's own
+// finding into another's input within the same run), not something
+// this package's own pure functions enforce on their own.
 package attackerswarm
 
 import (
