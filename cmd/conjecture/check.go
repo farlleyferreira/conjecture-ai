@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
 	"github.com/farlleyferreira/conjecture-ai/internal/conformancecycle"
+	"github.com/farlleyferreira/conjecture-ai/internal/contextcomposition"
 	"github.com/farlleyferreira/conjecture-ai/internal/contextengine"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/omissiondetection"
@@ -108,6 +110,18 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	if err := contextengine.EnsureSchema(db); err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
+	}
+	// context-composition's own area filter ("conjecture context list
+	// --area") needs a real, grounded source for a context's area -
+	// this is it: every check run keeps f's own phenomenon context in
+	// sync, with area auto-derived from f.area (loadFicha's own "a
+	// file's area is its directory" convention, the one already used
+	// everywhere else in this codebase), never invented or asked of
+	// the operator. A failure here is reported but does not abort the
+	// check itself - context tracking is this command's own side
+	// effect, not what it exists to do.
+	if err := syncCheckContext(db, f); err != nil {
+		_, _ = fmt.Fprintf(stdout, "%s: WARNING: could not sync verification context: %v\n", f.phenomenonID, err)
 	}
 
 	sb := &sandbox.Sandbox{}
@@ -547,4 +561,40 @@ func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, level con
 		item := workqueue.Item{ID: hypothesisID, Tier: workqueue.Blocker, Weight: 1, Severity: 1, CreatedAt: time.Now().UTC()}
 		_ = workqueue.Add(db, item)
 	}
+}
+
+// syncCheckContext keeps f's own phenomenon context in sync with its
+// current content - context-composition's own lifecycle, given a
+// real caller for the first time (see this function's own call site
+// in runCheck for why). The context is keyed by f.phenomenonID
+// (shared by every rule in the file, the same scope a .cjtr file's
+// own area/phenomenon already names), created with f.area if it does
+// not exist yet, and a new version is appended only when the file's
+// own content actually changed since the last recorded version -
+// running "conjecture check" twice against an unmodified file does
+// not inflate the context's version history for nothing.
+func syncCheckContext(db *sql.DB, f loadedFicha) error {
+	if err := contextcomposition.EnsureSchema(db); err != nil {
+		return err
+	}
+
+	if _, err := contextcomposition.GetContext(db, f.phenomenonID); err != nil {
+		if !errors.Is(err, contextcomposition.ErrContextNotFound) {
+			return err
+		}
+		if _, err := contextcomposition.CreateContext(db, f.phenomenonID, f.area); err != nil {
+			return err
+		}
+	}
+
+	latest, err := contextcomposition.LatestVersion(db, f.phenomenonID)
+	if err != nil && !errors.Is(err, contextcomposition.ErrVersionNotFound) {
+		return err
+	}
+	if err != nil || latest.Content != string(f.raw) {
+		if _, err := contextcomposition.AddVersion(db, f.phenomenonID, string(f.raw)); err != nil {
+			return err
+		}
+	}
+	return nil
 }

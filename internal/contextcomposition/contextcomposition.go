@@ -65,6 +65,18 @@ type Context struct {
 	// SupersededBy is the ID of the context that superseded this one,
 	// set only once State is Archived.
 	SupersededBy string
+	// Area is the context's own declared area, for "conjecture
+	// context list"'s own area filter - "" when the context has none
+	// (not every context is tied to one .cjtr file's own area/
+	// phenomenon path). This is the caller's own fact, the same
+	// "caller supplies the fact" posture this codebase already takes
+	// everywhere a value cannot be derived from the cjtr-language
+	// grammar alone - see [CreateContext]'s own doc comment for the
+	// one real caller that already has a grounded area to supply
+	// (cmd/conjecture's own "conjecture check", reusing the exact
+	// area/phenomenon path convention loadFicha already derives a
+	// .cjtr file's own area from).
+	Area string
 	// CreatedAt is set only for a context loaded from the store (see
 	// store.go) - the zero value for one built in memory.
 	CreatedAt time.Time

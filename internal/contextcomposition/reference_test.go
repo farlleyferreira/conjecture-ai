@@ -4,7 +4,7 @@ import "testing"
 
 func TestResolveReference_FollowsLatestWhenSeqIsZero(t *testing.T) {
 	db := openTestStore(t)
-	if _, err := CreateContext(db, "source"); err != nil {
+	if _, err := CreateContext(db, "source", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 	if _, err := AddVersion(db, "source", "v1 content"); err != nil {
@@ -27,7 +27,7 @@ func TestResolveReference_DoesNotCopyContent_SeesLaterVersionsOfTheSameSource(t 
 	// with a new version added to the source in between - a copy taken
 	// once would never see it.
 	db := openTestStore(t)
-	if _, err := CreateContext(db, "source"); err != nil {
+	if _, err := CreateContext(db, "source", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 	if _, err := AddVersion(db, "source", "v1 content"); err != nil {
@@ -58,7 +58,7 @@ func TestResolveReference_DoesNotCopyContent_SeesLaterVersionsOfTheSameSource(t 
 
 func TestResolveReference_PinnedSeqIgnoresLaterVersions(t *testing.T) {
 	db := openTestStore(t)
-	if _, err := CreateContext(db, "source"); err != nil {
+	if _, err := CreateContext(db, "source", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 	if _, err := AddVersion(db, "source", "v1 content"); err != nil {

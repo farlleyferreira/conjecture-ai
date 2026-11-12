@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 )
@@ -54,7 +55,7 @@ func TestParseVersionRef_MalformedTagIsError(t *testing.T) {
 func TestCreateContext_ThenGetContext(t *testing.T) {
 	db := openTestStore(t)
 
-	created, err := CreateContext(db, "checkout")
+	created, err := CreateContext(db, "checkout", "")
 	if err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
@@ -73,10 +74,10 @@ func TestCreateContext_ThenGetContext(t *testing.T) {
 
 func TestCreateContext_DuplicateNameIsError(t *testing.T) {
 	db := openTestStore(t)
-	if _, err := CreateContext(db, "checkout"); err != nil {
+	if _, err := CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("first CreateContext returned unexpected error: %v", err)
 	}
-	if _, err := CreateContext(db, "checkout"); err == nil {
+	if _, err := CreateContext(db, "checkout", ""); err == nil {
 		t.Error("second CreateContext with the same name = nil error, want one")
 	}
 }
@@ -92,7 +93,7 @@ func TestGetContext_UnknownNameIsErrContextNotFound(t *testing.T) {
 func TestListContexts_ReturnsEveryRegisteredContext(t *testing.T) {
 	db := openTestStore(t)
 	for _, name := range []string{"checkout", "cart"} {
-		if _, err := CreateContext(db, name); err != nil {
+		if _, err := CreateContext(db, name, ""); err != nil {
 			t.Fatalf("CreateContext(%q) returned unexpected error: %v", name, err)
 		}
 	}
@@ -109,9 +110,89 @@ func TestListContexts_ReturnsEveryRegisteredContext(t *testing.T) {
 	}
 }
 
+func TestListContextsFiltered_ByArea(t *testing.T) {
+	db := openTestStore(t)
+	if _, err := CreateContext(db, "checkout", "web"); err != nil {
+		t.Fatalf("CreateContext(checkout) returned unexpected error: %v", err)
+	}
+	if _, err := CreateContext(db, "cart", "mobile"); err != nil {
+		t.Fatalf("CreateContext(cart) returned unexpected error: %v", err)
+	}
+
+	got, err := ListContextsFiltered(db, ContextFilter{Area: "web"})
+	if err != nil {
+		t.Fatalf("ListContextsFiltered returned unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "checkout" {
+		t.Errorf("ListContextsFiltered(Area: \"web\") = %+v, want only [checkout]", got)
+	}
+}
+
+func TestListContextsFiltered_ByDateRange(t *testing.T) {
+	db := openTestStore(t)
+	insertContextAt(t, db, "old", "2020-01-01T00:00:00Z")
+	insertContextAt(t, db, "middle", "2020-06-01T00:00:00Z")
+	insertContextAt(t, db, "new", "2020-12-31T00:00:00Z")
+
+	since, err := time.Parse(time.RFC3339, "2020-03-01T00:00:00Z")
+	if err != nil {
+		t.Fatalf("time.Parse returned unexpected error: %v", err)
+	}
+	until, err := time.Parse(time.RFC3339, "2020-09-01T00:00:00Z")
+	if err != nil {
+		t.Fatalf("time.Parse returned unexpected error: %v", err)
+	}
+
+	got, err := ListContextsFiltered(db, ContextFilter{Since: since, Until: until})
+	if err != nil {
+		t.Fatalf("ListContextsFiltered returned unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "middle" {
+		t.Errorf("ListContextsFiltered(2020-03-01..2020-09-01) = %+v, want only [middle]", got)
+	}
+}
+
+func TestListContextsFiltered_CombinedAreaAndDate(t *testing.T) {
+	db := openTestStore(t)
+	insertContextAt(t, db, "old-web", "2020-01-01T00:00:00Z")
+	insertContextAt(t, db, "new-web", "2020-12-01T00:00:00Z")
+	if _, err := db.Exec(`UPDATE contexts SET area = ? WHERE name = ?`, "web", "old-web"); err != nil {
+		t.Fatalf("setting area on old-web returned unexpected error: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE contexts SET area = ? WHERE name = ?`, "web", "new-web"); err != nil {
+		t.Fatalf("setting area on new-web returned unexpected error: %v", err)
+	}
+
+	since, err := time.Parse(time.RFC3339, "2020-06-01T00:00:00Z")
+	if err != nil {
+		t.Fatalf("time.Parse returned unexpected error: %v", err)
+	}
+
+	got, err := ListContextsFiltered(db, ContextFilter{Area: "web", Since: since})
+	if err != nil {
+		t.Fatalf("ListContextsFiltered returned unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "new-web" {
+		t.Errorf("ListContextsFiltered(Area: \"web\", Since: 2020-06-01) = %+v, want only [new-web]", got)
+	}
+}
+
+// insertContextAt inserts an Active context named name with the given
+// RFC3339 createdAt, bypassing CreateContext's own time.Now() so date-
+// range filtering tests can control CreatedAt directly.
+func insertContextAt(t *testing.T, db *sql.DB, name, createdAt string) {
+	t.Helper()
+	if _, err := db.Exec(
+		`INSERT INTO contexts (name, state, superseded_by, area, created_at) VALUES (?, ?, ?, ?, ?)`,
+		name, Active.String(), "", "", createdAt,
+	); err != nil {
+		t.Fatalf("inserting context %q returned unexpected error: %v", name, err)
+	}
+}
+
 func TestAddVersion_SeqStartsAtOneAndIncrements(t *testing.T) {
 	db := openTestStore(t)
-	if _, err := CreateContext(db, "checkout"); err != nil {
+	if _, err := CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 
@@ -135,7 +216,7 @@ func TestAddVersion_SeqStartsAtOneAndIncrements(t *testing.T) {
 func TestAddVersion_SeqNumberingIsIndependentPerContext(t *testing.T) {
 	db := openTestStore(t)
 	for _, name := range []string{"checkout", "cart"} {
-		if _, err := CreateContext(db, name); err != nil {
+		if _, err := CreateContext(db, name, ""); err != nil {
 			t.Fatalf("CreateContext(%q) returned unexpected error: %v", name, err)
 		}
 	}
@@ -154,7 +235,7 @@ func TestAddVersion_SeqNumberingIsIndependentPerContext(t *testing.T) {
 
 func TestResume_ReturnsLatestVersion(t *testing.T) {
 	db := openTestStore(t)
-	if _, err := CreateContext(db, "checkout"); err != nil {
+	if _, err := CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 	if _, err := AddVersion(db, "checkout", "old"); err != nil {
@@ -175,7 +256,7 @@ func TestResume_ReturnsLatestVersion(t *testing.T) {
 
 func TestResume_NoVersionsIsErrVersionNotFound(t *testing.T) {
 	db := openTestStore(t)
-	if _, err := CreateContext(db, "checkout"); err != nil {
+	if _, err := CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 	_, err := Resume(db, "checkout")
@@ -186,7 +267,7 @@ func TestResume_NoVersionsIsErrVersionNotFound(t *testing.T) {
 
 func TestOpen_ReturnsTheExactVersionAsked(t *testing.T) {
 	db := openTestStore(t)
-	if _, err := CreateContext(db, "checkout"); err != nil {
+	if _, err := CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 	if _, err := AddVersion(db, "checkout", "v1 content"); err != nil {
@@ -207,7 +288,7 @@ func TestOpen_ReturnsTheExactVersionAsked(t *testing.T) {
 
 func TestOpen_WithNoVersionIsError(t *testing.T) {
 	db := openTestStore(t)
-	if _, err := CreateContext(db, "checkout"); err != nil {
+	if _, err := CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 	if _, err := AddVersion(db, "checkout", "content"); err != nil {
@@ -222,7 +303,7 @@ func TestOpen_WithNoVersionIsError(t *testing.T) {
 
 func TestOpen_UnknownVersionIsErrVersionNotFound(t *testing.T) {
 	db := openTestStore(t)
-	if _, err := CreateContext(db, "checkout"); err != nil {
+	if _, err := CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 	_, err := Open(db, VersionRef{Name: "checkout", Seq: 99})
@@ -233,7 +314,7 @@ func TestOpen_UnknownVersionIsErrVersionNotFound(t *testing.T) {
 
 func TestArchiveContext_ThenRestore(t *testing.T) {
 	db := openTestStore(t)
-	if _, err := CreateContext(db, "checkout"); err != nil {
+	if _, err := CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 
@@ -273,7 +354,7 @@ func TestArchiveContext_ThenRestore(t *testing.T) {
 
 func TestRestore_NotArchivedIsError(t *testing.T) {
 	db := openTestStore(t)
-	if _, err := CreateContext(db, "checkout"); err != nil {
+	if _, err := CreateContext(db, "checkout", ""); err != nil {
 		t.Fatalf("CreateContext returned unexpected error: %v", err)
 	}
 

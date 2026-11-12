@@ -80,6 +80,7 @@ func EnsureSchema(db *sql.DB) error {
 			name          TEXT PRIMARY KEY,
 			state         TEXT NOT NULL,
 			superseded_by TEXT NOT NULL,
+			area          TEXT NOT NULL DEFAULT '',
 			created_at    TEXT NOT NULL
 		);
 		CREATE TABLE IF NOT EXISTS context_versions (
@@ -100,31 +101,33 @@ func EnsureSchema(db *sql.DB) error {
 // built on it when name names no registered context.
 var ErrContextNotFound = errors.New("contextcomposition: context not found")
 
-// CreateContext registers a new, Active context named name. It fails
-// if name is already registered - a caller wanting to replace one
-// archives it first (see [ArchiveContext]), rather than overwriting an
-// existing registration silently.
-func CreateContext(db *sql.DB, name string) (Context, error) {
+// CreateContext registers a new, Active context named name, with the
+// caller's own declared area (see [Context.Area]'s own doc comment;
+// "" when the caller has none to give). It fails if name is already
+// registered - a caller wanting to replace one archives it first (see
+// [ArchiveContext]), rather than overwriting an existing registration
+// silently.
+func CreateContext(db *sql.DB, name, area string) (Context, error) {
 	now := time.Now().UTC()
 	_, err := db.Exec(
-		`INSERT INTO contexts (name, state, superseded_by, created_at) VALUES (?, ?, ?, ?)`,
-		name, Active.String(), "", now.Format(time.RFC3339Nano),
+		`INSERT INTO contexts (name, state, superseded_by, area, created_at) VALUES (?, ?, ?, ?, ?)`,
+		name, Active.String(), "", area, now.Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return Context{}, fmt.Errorf("contextcomposition: creating context %q: %w", name, err)
 	}
-	return Context{ID: name, State: Active, CreatedAt: now}, nil
+	return Context{ID: name, State: Active, Area: area, CreatedAt: now}, nil
 }
 
 // GetContext returns the registered context named name, or
 // [ErrContextNotFound] if there is none.
 func GetContext(db *sql.DB, name string) (Context, error) {
 	var (
-		state, supersededBy, createdAt string
+		state, supersededBy, area, createdAt string
 	)
 	err := db.QueryRow(
-		`SELECT state, superseded_by, created_at FROM contexts WHERE name = ?`, name,
-	).Scan(&state, &supersededBy, &createdAt)
+		`SELECT state, superseded_by, area, created_at FROM contexts WHERE name = ?`, name,
+	).Scan(&state, &supersededBy, &area, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Context{}, fmt.Errorf("%w: %q", ErrContextNotFound, name)
 	}
@@ -141,13 +144,56 @@ func GetContext(db *sql.DB, name string) (Context, error) {
 		return Context{}, fmt.Errorf("contextcomposition: parsing created_at for %q: %w", name, err)
 	}
 
-	return Context{ID: name, State: parsedState, SupersededBy: supersededBy, CreatedAt: parsedCreatedAt}, nil
+	return Context{ID: name, State: parsedState, SupersededBy: supersededBy, Area: area, CreatedAt: parsedCreatedAt}, nil
 }
 
 // ListContexts returns every registered context, oldest first - the
-// "conjecture context list" command.
+// "conjecture context list" command's own unfiltered form.
 func ListContexts(db *sql.DB) ([]Context, error) {
-	rows, err := db.Query(`SELECT name, state, superseded_by, created_at FROM contexts ORDER BY created_at ASC`)
+	return ListContextsFiltered(db, ContextFilter{})
+}
+
+// ContextFilter narrows [ListContextsFiltered]'s own result - every
+// non-zero field applied as an AND condition. Area matches exactly
+// (empty string matches every context, filtered or not - this is not
+// itself a way to ask for "contexts with no area"). Since and Until
+// bound CreatedAt, both inclusive; a zero time.Time leaves that bound
+// open.
+type ContextFilter struct {
+	Area         string
+	Since, Until time.Time
+}
+
+// ListContextsFiltered is [ListContexts], narrowed by filter -
+// "conjecture context list"'s own area/date filtering. Area and date
+// are the only two conditions this codebase can actually ground
+// (Area in whatever the caller already supplied it at creation time -
+// see [CreateContext] - and CreatedAt, which every context already
+// has for real); a third "tags" filter the product proposal's own
+// lost worked-example table once named is deliberately not attempted
+// here - nothing in this codebase has more than one single context-
+// creating path yet (cmd/conjecture's own "conjecture check"), so a
+// tag naming "which command created this" could not yet take more
+// than one value, which is not a filter worth building ahead of a
+// second value actually existing.
+func ListContextsFiltered(db *sql.DB, filter ContextFilter) ([]Context, error) {
+	query := `SELECT name, state, superseded_by, area, created_at FROM contexts WHERE 1=1`
+	var args []any
+	if filter.Area != "" {
+		query += ` AND area = ?`
+		args = append(args, filter.Area)
+	}
+	if !filter.Since.IsZero() {
+		query += ` AND created_at >= ?`
+		args = append(args, filter.Since.UTC().Format(time.RFC3339Nano))
+	}
+	if !filter.Until.IsZero() {
+		query += ` AND created_at <= ?`
+		args = append(args, filter.Until.UTC().Format(time.RFC3339Nano))
+	}
+	query += ` ORDER BY created_at ASC`
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("contextcomposition: listing contexts: %w", err)
 	}
@@ -157,7 +203,7 @@ func ListContexts(db *sql.DB) ([]Context, error) {
 	for rows.Next() {
 		var c Context
 		var state, createdAt string
-		if err := rows.Scan(&c.ID, &state, &c.SupersededBy, &createdAt); err != nil {
+		if err := rows.Scan(&c.ID, &state, &c.SupersededBy, &c.Area, &createdAt); err != nil {
 			return nil, fmt.Errorf("contextcomposition: listing contexts: %w", err)
 		}
 		parsedState, err := ParseLifecycleState(state)
