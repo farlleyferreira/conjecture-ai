@@ -78,39 +78,72 @@ func (t *Table) Lookup(keys map[string]string, keyConcepts map[string]Concept) (
 		}
 		valueCol = i
 	}
-	for name := range keys {
-		if _, ok := keyCols[name]; !ok {
-			return "", fmt.Errorf("cjtr: table has no column named %q for its by-key", name)
-		}
-	}
 	if valueCol == -1 {
 		return "", fmt.Errorf("cjtr: table has no column left for its value besides its by-keys")
 	}
 
-	match := -1
+	matches, err := t.matchingRows(keys, keyCols, keyConcepts)
+	if err != nil {
+		return "", err
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("cjtr: table has no row matching %v", keys)
+	case 1:
+		return t.Rows[matches[0]][valueCol], nil
+	default:
+		return "", fmt.Errorf("cjtr: table has more than one row matching %v", keys)
+	}
+}
+
+// MatchCount reports how many of t's own rows match keys (a by-key
+// name -> its resolved value, the same shape [Table.Lookup] itself
+// takes) - 0, 1, or more than 1. It exists so a caller that only cares
+// whether a combination of by-key values has any row at all (omission-
+// detection's own Type C, "a case missing from a decision table") can
+// ask that without also needing a value column to exist, which
+// [Lookup] itself requires but this does not.
+func (t *Table) MatchCount(keys map[string]string, keyConcepts map[string]Concept) (int, error) {
+	keyCols := make(map[string]int, len(keys))
+	for i, col := range t.Header {
+		if _, isKey := keys[col]; isKey {
+			keyCols[col] = i
+		}
+	}
+	matches, err := t.matchingRows(keys, keyCols, keyConcepts)
+	if err != nil {
+		return 0, err
+	}
+	return len(matches), nil
+}
+
+// matchingRows returns the row indices matching keys, resolved
+// against keyCols (keys's own column name -> header index) - the
+// shared row-scan both [Lookup] and [MatchCount] run, differing only
+// in what they do with the result.
+func (t *Table) matchingRows(keys map[string]string, keyCols map[string]int, keyConcepts map[string]Concept) ([]int, error) {
+	for name := range keys {
+		if _, ok := keyCols[name]; !ok {
+			return nil, fmt.Errorf("cjtr: table has no column named %q for its by-key", name)
+		}
+	}
+
+	var matches []int
 	for i, row := range t.Rows {
 		rowMatches := true
 		for name, col := range keyCols {
 			eq, err := valuesEqual(keyConcepts[name], row[col], keys[name])
 			if err != nil {
-				return "", fmt.Errorf("cjtr: comparing by-key %q: %w", name, err)
+				return nil, fmt.Errorf("cjtr: comparing by-key %q: %w", name, err)
 			}
 			if !eq {
 				rowMatches = false
 				break
 			}
 		}
-		if !rowMatches {
-			continue
+		if rowMatches {
+			matches = append(matches, i)
 		}
-		if match != -1 {
-			return "", fmt.Errorf("cjtr: table has more than one row matching %v", keys)
-		}
-		match = i
 	}
-	if match == -1 {
-		return "", fmt.Errorf("cjtr: table has no row matching %v", keys)
-	}
-
-	return t.Rows[match][valueCol], nil
+	return matches, nil
 }

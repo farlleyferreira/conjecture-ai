@@ -34,6 +34,15 @@ const checkUsage = "usage: conjecture check <file.cjtr> <docker-image> <command.
 // value the specification gives.
 const lawContestedThreshold = 3
 
+// maxTypeCKeyValuesPerConcept caps how many values [omissiondetection.
+// CheckTypeC] will exhaustively enumerate per by-key concept - the
+// same kind of disclosed cap, and the same literal value, conformance-
+// cycle's own unexported maxBoundedProofValuesPerConcept already uses
+// for the same reason ([cjtr.ExhaustiveValues]'s own ceiling against
+// an unbounded combinatorial blowup), restated here since that
+// constant is private to its own package.
+const maxTypeCKeyValuesPerConcept = 500
+
 // runCheck implements "conjecture check" - the first command wiring
 // spec-judge, conformance-cycle, and evidence-ledger together into one
 // real loop: for every hypothesis and user-defined law in file, it
@@ -104,6 +113,33 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	sb := &sandbox.Sandbox{}
 	ctx := context.Background()
 	exitCode := 0
+
+	// omission-detection's "Type C - case not specified" (decision-
+	// table half): checked once per table concept the file declares,
+	// independent of any rule or hypothesis grouping - a table's own
+	// by-key domain is what "a case missing" is checked against here.
+	for name, c := range f.concepts {
+		if c.Kind != cjtr.TableConcept {
+			continue
+		}
+		table, ok := f.tables[name]
+		if !ok {
+			continue
+		}
+		omissions, found, err := omissiondetection.CheckTypeC(c, f.concepts, table, maxTypeCKeyValuesPerConcept)
+		if err != nil {
+			_, _ = fmt.Fprintf(stdout, "%s: ERROR checking Type C omissions for %q: %v\n", f.phenomenonID, name, err)
+			exitCode = 1
+			continue
+		}
+		if !found {
+			continue
+		}
+		for _, o := range omissions {
+			_, _ = fmt.Fprintf(stdout, "%s: TYPE C OMISSION: table %q has no row for %v\n", f.phenomenonID, name, o.Keys)
+			exitCode = 1
+		}
+	}
 
 	// specVersion identifies the exact frozen .cjtr content this run
 	// checked against - [evidenceledger.ValidityHash]'s own

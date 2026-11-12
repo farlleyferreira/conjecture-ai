@@ -108,6 +108,42 @@ func TestTable_Lookup_AmbiguousValueColumn(t *testing.T) {
 	}
 }
 
+func TestTable_MatchCount(t *testing.T) {
+	table := &Table{
+		Header: []string{"region", "fee"},
+		Rows:   [][]string{{"SP", "9.90"}, {"SP", "14.90"}, {"RJ", "12.50"}},
+	}
+	keyConcepts := map[string]Concept{"region": {Name: "region", Kind: VariableConcept, Type: "text"}}
+
+	tests := []struct {
+		region string
+		want   int
+	}{
+		{"SP", 2},
+		{"RJ", 1},
+		{"BA", 0},
+	}
+	for _, tt := range tests {
+		got, err := table.MatchCount(map[string]string{"region": tt.region}, keyConcepts)
+		if err != nil {
+			t.Fatalf("MatchCount(%q) returned unexpected error: %v", tt.region, err)
+		}
+		if got != tt.want {
+			t.Errorf("MatchCount(%q) = %d, want %d", tt.region, got, tt.want)
+		}
+	}
+}
+
+func TestTable_MatchCount_UnknownByKeyIsError(t *testing.T) {
+	table := &Table{Header: []string{"region", "fee"}, Rows: [][]string{{"SP", "9.90"}}}
+	keyConcepts := map[string]Concept{"region": {Name: "region", Kind: VariableConcept, Type: "text"}}
+
+	_, err := table.MatchCount(map[string]string{"nope": "x"}, keyConcepts)
+	if err == nil {
+		t.Fatal("MatchCount with a by-key not in the table's header = nil error, want an error")
+	}
+}
+
 func TestLoadTables(t *testing.T) {
 	dir := t.TempDir()
 	writeCSV(t, dir, "shipping.csv", "region,fee\nSP,9.90\n")

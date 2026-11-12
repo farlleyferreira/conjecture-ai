@@ -4,11 +4,12 @@
 // Type D ("requirement nobody thought of", typed.go), Type A
 // ("asserted but not implemented", typea.go - conformance-cycle's own
 // directed-sampling run now provides real implementation evidence to
-// check against), and Type B ("case forgotten within the domain",
+// check against), Type B ("case forgotten within the domain",
 // typeb.go - reusing conformance-cycle's own directed-sampling
-// boundary generation as its property-based test generator) are
-// implemented. Type C still needs machinery this codebase does not
-// have yet: a decision-table/state-event-matrix grammar.
+// boundary generation as its property-based test generator), and Type
+// C ("case not specified", typec.go - its decision-table half only;
+// the state/event-matrix half needs a grammar this codebase does not
+// have) are implemented.
 package omissiondetection
 
 // Catalog is a configurable list of requirement categories to check
