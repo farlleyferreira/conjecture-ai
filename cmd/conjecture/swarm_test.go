@@ -144,6 +144,30 @@ func TestParseStrategySpec_WrongPartCountIsError(t *testing.T) {
 	if _, err := parseStrategySpec("alpha|ollama"); err == nil {
 		t.Error("parseStrategySpec with 2 parts = nil error, want one")
 	}
+	if _, err := parseStrategySpec("alpha|ollama|m|http://x|extra"); err == nil {
+		t.Error("parseStrategySpec with 5 parts = nil error, want one")
+	}
+}
+
+func TestParseStrategySpec_OptionalBaseURL(t *testing.T) {
+	got, err := parseStrategySpec("alpha|llamacpp||http://localhost:8081")
+	if err != nil {
+		t.Fatalf("parseStrategySpec returned unexpected error: %v", err)
+	}
+	want := strategySpec{family: "alpha", runtime: "llamacpp", model: "", baseURL: "http://localhost:8081"}
+	if got != want {
+		t.Errorf("parseStrategySpec = %+v, want %+v", got, want)
+	}
+}
+
+func TestParseStrategySpec_NoBaseURLDefaultsEmpty(t *testing.T) {
+	got, err := parseStrategySpec("alpha|llamacpp|")
+	if err != nil {
+		t.Fatalf("parseStrategySpec returned unexpected error: %v", err)
+	}
+	if got.baseURL != "" {
+		t.Errorf("got.baseURL = %q, want empty", got.baseURL)
+	}
 }
 
 func TestParseStrategySpec_EmptyFamilyIsError(t *testing.T) {
