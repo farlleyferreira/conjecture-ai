@@ -1,10 +1,12 @@
 // Package languageagnosticcontracts implements pieces of the
 // language-agnostic-contracts capability (openspec/specs/language-
-// agnostic-contracts/spec.md): currently its "Read-only dependency
-// analysis" requirement only ("The system SHALL use a read-only,
-// language-agnostic parsing approach (such as Tree-sitter) only for
-// dependency-rule checks, and SHALL NOT use it to infer business
-// semantics").
+// agnostic-contracts/spec.md): "Read-only dependency analysis" (this
+// file - "The system SHALL use a read-only, language-agnostic parsing
+// approach (such as Tree-sitter) only for dependency-rule checks, and
+// SHALL NOT use it to infer business semantics") and "Generic
+// accessibility driver for GUI targets" - the latter as a contract
+// only, with no per-OS backend yet (see guidriver.go's own doc
+// comment for why).
 //
 // "Observation only through declared contracts" and "Standard result
 // formats" are already satisfied elsewhere in this codebase without a
@@ -12,8 +14,8 @@
 // commands/interfaces directly, and internal/jsonschema, internal/
 // junit, and internal/tap already parse the standard result formats
 // the specification names. "Optional runtime adapters for
-// introspection" and "Generic accessibility driver for GUI targets"
-// remain separate, still-disclosed gaps this package does not touch.
+// introspection" remains a separate, still-disclosed gap this package
+// does not touch.
 //
 // CGO honesty note: Tree-sitter's own parsing engine and every
 // language grammar for it are C code - there is no pure-Go
