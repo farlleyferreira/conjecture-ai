@@ -3,13 +3,17 @@
 // spec.md): the minimum hardware requirement, and the local
 // scheduling policy (see schedule.go) that keep the adversarial SLM,
 // the system under test, and heavy background work from competing for
-// the same machine at the wrong time. Measuring the facts that policy
-// decides over - whether the system under test is currently under
-// heavy load, whether the user is actively using the machine - is not
-// implemented here: no caller in this codebase runs the adversarial-
-// SLM attack loop or a background verification pass from a real
-// invocation yet to have real load to measure (see schedule.go's own
-// doc comment).
+// the same machine at the wrong time. Of the two facts that policy
+// decides over, "the user is actively using the machine" is now
+// measured for real (cpuload.go's own CPU-load proxy - see its own
+// doc comment for why overall CPU load, not literal input-idle
+// detection, is this package's chosen reading) and wired into
+// "conjecture watch" (cmd/conjecture's own real background
+// verification loop). "Whether the system under test is currently
+// under heavy load" is not: nothing in this codebase isolates that
+// one process's own load specifically from the machine's overall CPU
+// busyness cpuload.go already reads (see schedule.go's own doc
+// comment).
 package hardwarescheduler
 
 import (
