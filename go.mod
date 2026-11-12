@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/google/cel-go v0.29.0
+	github.com/mackerelio/go-osstat v0.2.8
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
@@ -27,7 +28,7 @@ require (
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240826202546-f6391c0de4c7 // indirect
