@@ -167,7 +167,7 @@ func newMCPServer(db *sql.DB) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "queue_list",
-		Description: "List every item currently in the three-tier work queue, unordered - the same listing \"conjecture queue list\" prints from the CLI. Pure read; unlike \"conjecture queue next\", this never removes anything from the queue.",
+		Description: "Read the three-tier work queue - by default a summary grouped by area::phenomenon (item count per tier), bounded by how many distinct phenomena have queued items rather than the raw item count, which never has a cap. Pass \"area\" to narrow the summary, or both \"area\" and \"phenomenon\" to drill into that one phenomenon's own items. The same view \"conjecture queue list\" prints from the CLI. Pure read; unlike \"conjecture queue next\", this never removes anything from the queue.",
 	}, queueListTool)
 
 	mcp.AddTool(server, &mcp.Tool{

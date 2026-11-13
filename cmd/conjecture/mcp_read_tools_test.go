@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/contextcomposition"
+	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -175,16 +176,113 @@ func TestMCPContextResolveConflictTool_ReportsDecidedWinner(t *testing.T) {
 	}
 }
 
-func TestMCPQueueListTool_ReportsSeededItem(t *testing.T) {
+func TestMCPQueueListTool_EmptyQueueReportsEmpty(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	session, _ := connectMCPTestClient(t)
 
-	out := callReadTool(t, session, "queue_list", map[string]any{})
-	if !out.OK {
-		t.Errorf("queue_list.ok = false, report: %s", out.Report)
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "queue_list", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
 	}
-	if !strings.Contains(out.Report, "queue is empty") {
-		t.Errorf("queue_list report = %q, want \"queue is empty\" for a fresh store", out.Report)
+	if res.IsError {
+		t.Fatalf("CallTool result IsError = true, content: %+v", res.Content)
+	}
+	text, ok := res.Content[0].(*mcp.TextContent)
+	if !ok || !strings.Contains(text.Text, "queue is empty") {
+		t.Errorf("queue_list content = %+v, want it to report \"queue is empty\" for a fresh store", res.Content)
+	}
+	out, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want map[string]any: %+v", res.StructuredContent, res.StructuredContent)
+	}
+	if out["summaries"] != nil || out["items"] != nil {
+		t.Errorf("queue_list structured output = %+v, want both summaries and items empty/absent", out)
+	}
+}
+
+func TestMCPQueueListTool_GroupsByPhenomenonAndDrillsDown(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	session, _ := connectMCPTestClient(t)
+
+	// queueListTool reads via openRepoStore (the real per-OS store,
+	// redirected here only by XDG_DATA_HOME above) - not the shared db
+	// connectMCPTestClient returns, which backs the other MCP tools
+	// instead. Seed through the same path queueListTool itself reads.
+	queueDB, err := persistence.OpenStore(".")
+	if err != nil {
+		t.Fatalf("OpenStore returned unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = queueDB.Close() })
+	if err := workqueue.EnsureSchema(queueDB); err != nil {
+		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
+	}
+	now := time.Now().UTC()
+	items := []workqueue.Item{
+		{ID: "demo-area::checkout::shipping-rule::fee-matches", Tier: workqueue.Blocker, Weight: 1, Severity: 1, CreatedAt: now},
+		{ID: "demo-area::checkout::shipping-rule::other-hyp", Tier: workqueue.Background, Weight: 1, Severity: 0, CreatedAt: now},
+		{ID: "demo-area::billing::some-law", Tier: workqueue.CurrentTask, Weight: 2, Severity: 1, CreatedAt: now},
+		{ID: "other-area::demo::some-law", Tier: workqueue.Blocker, Weight: 1, Severity: 1, CreatedAt: now},
+	}
+	for _, it := range items {
+		if err := workqueue.Add(queueDB, it); err != nil {
+			t.Fatalf("workqueue.Add returned unexpected error: %v", err)
+		}
+	}
+
+	// No filter: grouped summary across every phenomenon.
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "queue_list", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
+	}
+	out, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want map[string]any: %+v", res.StructuredContent, res.StructuredContent)
+	}
+	summaries, ok := out["summaries"].([]any)
+	if !ok || len(summaries) != 3 {
+		t.Fatalf("summaries = %+v, want exactly 3 (demo-area::checkout, demo-area::billing, other-area::demo)", out["summaries"])
+	}
+	first, _ := summaries[0].(map[string]any)
+	if first["phenomenon_id"] != "demo-area::billing" || first["total"] != float64(1) {
+		t.Errorf("summaries[0] = %+v, want demo-area::billing with total 1 (alphabetically first)", first)
+	}
+
+	// --area narrows the summary.
+	res, err = session.CallTool(context.Background(), &mcp.CallToolParams{Name: "queue_list", Arguments: map[string]any{"area": "demo-area"}})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
+	}
+	out, _ = res.StructuredContent.(map[string]any)
+	summaries, _ = out["summaries"].([]any)
+	if len(summaries) != 2 {
+		t.Fatalf("summaries with area=demo-area = %+v, want exactly 2 (checkout and billing)", out["summaries"])
+	}
+
+	// --area + --phenomenon drills down to the raw items.
+	res, err = session.CallTool(context.Background(), &mcp.CallToolParams{Name: "queue_list", Arguments: map[string]any{"area": "demo-area", "phenomenon": "checkout"}})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
+	}
+	out, _ = res.StructuredContent.(map[string]any)
+	if out["summaries"] != nil {
+		t.Errorf("drill-down structured output = %+v, want summaries absent", out)
+	}
+	resultItems, ok := out["items"].([]any)
+	if !ok || len(resultItems) != 2 {
+		t.Fatalf("items = %+v, want exactly 2 (demo-area::checkout's own two)", out["items"])
+	}
+}
+
+func TestMCPQueueListTool_PhenomenonWithoutAreaIsError(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	session, _ := connectMCPTestClient(t)
+
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "queue_list", Arguments: map[string]any{"phenomenon": "checkout"}})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
+	}
+	if !res.IsError {
+		t.Error("CallTool result IsError = false for phenomenon without area, want true")
 	}
 }
 
