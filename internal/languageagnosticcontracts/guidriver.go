@@ -5,18 +5,40 @@
 // target under test is a GUI application THEN the system observes
 // its behavior through the generic accessibility driver."
 //
-// This defines the contract only - no per-OS backend yet. A real one
-// needs a genuinely different native API per OS (Windows' UI
-// Automation, Linux's AT-SPI over D-Bus, macOS's Accessibility API),
-// and - unlike every other gap this codebase has closed this session -
-// none of them can be exercised against a real GUI inside this
-// project's own CI pipeline (a headless container with no desktop
-// session running), so there is no honest way to build and verify one
-// here yet. Nothing in this codebase calls this interface yet either:
-// the cjtr-language grammar this package parses has no way to declare
-// a rule's target as a GUI application, distinct from a CLI or HTTP
-// one, in the first place - that is its own separate, ungrounded gap,
-// not something this file invents a grammar extension for.
+// [Driver] itself is this contract, OS-agnostic by construction - a
+// caller always sees the same interface regardless of platform.
+// [NewNativeDriver] resolves it to one real, OS-specific backend per
+// build (guidriver_windows.go for Windows' own UI Automation,
+// guidriver_linux.go for Linux's own AT-SPI, guidriver_unsupported.go
+// everywhere else, selected automatically by Go's own per-file GOOS
+// filename convention - never by this file, which has no OS-specific
+// code of its own). Neither backend hand-rolls its native API's own
+// COM/D-Bus wire protocol beyond what each already demands: the
+// Windows backend shells out to PowerShell's own managed UI Automation
+// client (the same real native IUIAutomation COM server underneath,
+// reached the same way this project already reaches Docker and z3 -
+// a real external implementation of a real standard, not a
+// reimplementation of one); the Linux backend speaks AT-SPI's own
+// D-Bus protocol directly via a well-maintained D-Bus client library,
+// since D-Bus method calls carry none of raw COM's vtable/ABI risk.
+//
+// Honesty note: only the Windows and Linux backends are verified for
+// real (this project has a real Windows machine and a real WSL Linux
+// environment to test against, this session) - macOS's own
+// Accessibility API has no backend yet (guidriver_unsupported.go
+// covers it with a clear runtime error, not a guess at its API).
+// Neither backend's own live integration test runs in this project's
+// CI (ubuntu-latest has no desktop session, and compiles only the
+// Linux-tagged file in the first place) - each backend's own pure
+// tree-building/role-mapping logic is unit-tested against a fake
+// instead, and its real end-to-end behavior is verified manually
+// against a real running GUI target.
+//
+// Nothing in this codebase calls [Driver] yet: the cjtr-language
+// grammar this package parses has no way to declare a rule's target
+// as a GUI application, distinct from a CLI or HTTP one, in the first
+// place - that is its own separate, ungrounded gap, not something
+// this file invents a grammar extension for.
 package languageagnosticcontracts
 
 import "context"
