@@ -54,6 +54,7 @@ Specify a behavior precisely with the user, then prove the real implementation m
 | `context_diff` | A real unified diff between two context versions |
 | `context_resolve_conflict` | Which composition mode wins a stated conflict, by the project's own precedence rule |
 | `queue_list` | A per-phenomenon summary of the work queue by default; pass `area`+`phenomenon` to drill into that one phenomenon's own raw items (never removes anything) |
+| `queue_review` | Every dead-lettered item (a hypothesis/law `conjecture work` could not act on automatically) by default unresolved only; pass `all` to include resolved ones too. Resolving one (`conjecture queue review --resolve <row-id>`) is human-only, CLI-only - never through this server |
 | `graph_inspect` | A context-engine node's weight/relevance/confidence axes |
 
 Before drilling into `queue_list` item-by-item for several phenomena in a row, look at the summary's own counts first and weigh that against your own remaining context budget - conjecture has no visibility into it (the MCP protocol does not expose it to the server), so only you can judge whether fetching every item is worth the context it costs.
