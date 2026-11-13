@@ -18,6 +18,12 @@ const initUsage = "usage: conjecture init [--dir <path>]"
 // surprise a repository the user has not opted into. --dir defaults
 // to the current working directory, the same assumption every other
 // command that reads this repository's own local store already makes.
+//
+// It also scaffolds the bundled orchestration skill
+// (ensureWorkflowSkill, skillscaffold.go) into the repository, the
+// same market-standard distribution mechanism this project's own
+// OpenSpec dependency already uses to ship its own skills into a
+// consuming project - idempotently, same as the layout itself.
 func runInit(args []string, stdout, stderr io.Writer) int {
 	dir := "."
 	for i := 0; i < len(args); i++ {
@@ -45,7 +51,12 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
+	if err := ensureWorkflowSkill(repoRoot); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
 
 	_, _ = fmt.Fprintf(stdout, "initialized conjecture layout at %s\n", repoRoot)
+	_, _ = fmt.Fprintf(stdout, "wrote orchestration skill to %s\n", filepath.Join(repoRoot, filepath.FromSlash(skillRelPath)))
 	return 0
 }

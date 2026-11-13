@@ -55,3 +55,16 @@ request came through.
 #### Scenario: CLI request receives CLI-delivered verdict
 - **WHEN** a verification request is made through the CLI
 - **THEN** the resulting verdict is delivered back through the CLI
+
+### Requirement: Onboarding skill scaffold
+The system SHALL ship, with its CLI's own repository-initialization command,
+an orchestration skill teaching an agent the full draft-verify-sign-
+implement-check loop and the human-only actions it must never perform on a
+user's behalf, delivered through the distribution convention the agent's
+own tooling already recognizes.
+
+#### Scenario: Initializing a repository scaffolds the skill
+- **WHEN** a user runs the CLI's repository-initialization command
+- **THEN** the orchestration skill is written into the repository, in the
+  agent-tooling-recognized location, without overwriting a copy already
+  present there
