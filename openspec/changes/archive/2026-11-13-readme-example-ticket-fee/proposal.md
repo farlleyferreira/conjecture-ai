@@ -25,6 +25,28 @@ prior two-condition/no-category-contrast version.
   (conformant), and `conjecture sign --confirmed` - the README's
   transcript is the real output of these commands, not fabricated text.
 
+## Follow-up: too many "not"s killed the pitch
+
+Feedback on the above: the README still read as discouraging - a "what
+this is not for" section up front with six negative bullets, right before
+"Status," left nothing confident for a reader to land on. Re-grounded the
+value proposition directly in this project's own real `openspec/specs/*/
+spec.md` Purpose statements (the authoritative product doc already in
+this repo) instead of inventing marketing copy:
+
+- Replaced the old 4-bullet "what conjecture also does" list with a
+  7-bullet "Why conjecture" section placed right after the worked
+  example, each bullet paraphrasing one real spec's own Purpose line
+  (conformance-cycle's frozen-spec rule, llm-orchestration's trust
+  boundary, adversarial-slm/attacker-swarm's independent attacker,
+  evidence-ledger's maturity ladder + omission-detection's four gap
+  classes, context-composition's versioning, language-agnostic-
+  contracts, optimization-suite's human-gated self-tuning).
+- Moved "what this is not for" and "Status" into one collapsed
+  `<details>` block ("Scope and limits") near the end, right before
+  License - every caveat kept, word for word, just no longer the first
+  thing a reader hits after the demo.
+
 ## Capabilities
 
 ### New Capabilities

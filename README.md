@@ -62,18 +62,6 @@ rules:
 Só isso. Sem código. Só a regra, em palavras que até alguém que não
 programa conseguiria ler em voz alta.
 
-## O que o `conjecture` também faz, a partir desse um loop
-
-- Pede a um LLM pra **rascunhar** a regra pra você, ou pra **escrever/
-  corrigir** a implementação até ela ficar conforme.
-- Executa **ataques** adversariais de LLM (um por vez, ou um swarm inteiro)
-  que tentam ativamente achar um caso em que a regra quebre.
-- **Promove** uma regra por uma escada de maturidade - Hypothesis → Thesis
-  → Theory → Law - conforme evidência real se acumula.
-- Registra toda decisão humana pelo caminho (quem assinou, quem promoveu,
-  quando) num ledger local à prova de adulteração - nunca só impresso num
-  terminal e esquecido.
-
 ## Veja ele pegar um bug real
 
 Aqui está uma "implementação" com um bug real: ela esquece de checar a
@@ -127,6 +115,35 @@ $ conjecture sign --user alice --confirmed conjecture/phenomena/ticketing/ticket
 
 Escreva a regra uma vez, aponte pro código real, receba um veredito real -
 e um registro assinado e atribuível de que um humano olhou pra isso.
+
+## Por que o `conjecture`
+
+- **Uma spec assinada congela antes do código ser julgado.** Depois que
+  você assina um arquivo `.cjtr`, o juiz checa a implementação só contra
+  essa regra exata e congelada - nada muda o gol de lugar no meio do
+  jogo.
+- **O modelo que escreve o código nunca corrige a própria prova.** Rascunho
+  e implementação sempre rodam em sessões separadas. Nenhuma das duas
+  consegue ver os casos ocultos que o juiz usa, chamar o juiz direto, ou
+  assinar algo em seu nome.
+- **Um modelo independente tenta ativamente quebrar sua regra.** Um SLM
+  adversarial local por padrão, ou um swarm inteiro deles rodando em
+  paralelo sem se coordenar ou debater entre si - caçando o contraexemplo
+  que você não pensou.
+- **Evidência se acumula - não é só pass/fail.** Uma regra sobe uma
+  escada real de maturidade (Hypothesis → Thesis → Theory → Law), e o
+  `conjecture` procura quatro tipos específicos de lacuna na spec antes
+  que elas se tornem comportamento faltando no código em produção.
+- **Todo contexto de verificação é versionado e retomável.** Liste,
+  reabra uma versão passada exata, compare duas versões, ou restaure uma
+  - nada de onde você parou precisa ser reconstruído de memória.
+- **Funciona com a linguagem que você já tem.** O `conjecture` observa seu
+  programa real só através de um contrato declarado de entrada/saída,
+  nunca entendendo a semântica da sua linguagem.
+- **Auto-ajuste fica sempre na coleira.** As únicas coisas que o
+  `conjecture` pode otimizar sobre si mesmo - geração de entrada,
+  orçamento do swarm, calibração - todas exigem seu `--approved` explícito
+  antes de qualquer mudança.
 
 ## Começo rápido
 
@@ -215,7 +232,18 @@ todo o exemplo prático acima, do início ao fim.
 Rode qualquer comando sem argumentos (ou qualquer bobagem no formato
 `--help`) pra ver sua própria string de uso real.
 
-## Pra que isso *não* serve
+<details>
+<summary><strong>Escopo e limites</strong> - leia antes de confiar nisso pra algo que importa</summary>
+
+O núcleo de verificação (check → attack/swarm → promote, execução em
+sandbox, o ledger de decisões, o conjunto completo de comandos de
+composição de contexto) está implementado e já foi rodado de verdade:
+contra um solver de restrições real (z3), um LLM local real
+(llama.cpp/Ollama), uma biblioteca de terceiros genuína e real
+(python-slugify - isso achou e corrigiu um bug real neste repositório), e
+verificação real de isolamento de rede.
+
+Pra que isso não serve, de propósito:
 
 - **Não é um framework de testes genérico.** Ele só checa se uma
   implementação em execução corresponde a uma regra que você escreveu na
@@ -229,10 +257,6 @@ Rode qualquer comando sem argumentos (ou qualquer bobagem no formato
   enumerável recebe o nível de rigor de "prova completa" deste código - a
   maioria dos checks é evidência forte, não uma garantia matemática pra
   toda entrada possível.
-- **Ainda não é uma ferramenta de teste de GUI/UI.** Existe um backend
-  real de acessibilidade pra Windows e Linux, mas nada na gramática
-  `.cjtr` consegue apontar pra uma GUI - é inalcançável a partir do fluxo
-  real da CLI hoje.
 - **Não é um produto de sandboxing/segurança.** A sandbox bloqueia acesso
   de rede de saída e nada mais - sem hardening de filesystem ou de
   recursos. Não aponte pra código em que você já não confia pra rodar na
@@ -240,21 +264,12 @@ Rode qualquer comando sem argumentos (ou qualquer bobagem no formato
 - **Não é um analisador estático pra um codebase inteiro.** `deps check`
   é um checker estreito de imports proibidos pra um arquivo Go por vez,
   não um linter.
-- **Não tem histórico de produção ainda.** Este é um projeto experimental,
+- **Ainda não tem histórico de produção.** Este é um projeto experimental,
   construído majoritariamente numa única sessão longa. Ninguém ainda usou
   pra tomar uma decisão real sobre código real do qual dependa - esse é o
-  próximo teste real, não algo que já ficou atrás.
+  próximo teste real.
 
-## Status
-
-O núcleo de verificação (check → attack/swarm → promote, execução em
-sandbox, o ledger de decisões, o conjunto completo de comandos de
-composição de contexto) está implementado e já foi rodado de verdade:
-contra um solver de restrições real (z3), um LLM local real
-(llama.cpp/Ollama), uma biblioteca de terceiros genuína e real
-(python-slugify - isso achou e corrigiu um bug real neste repositório), e
-verificação real de isolamento de rede. Duas coisas pra saber antes de
-confiar nisso:
+Mais duas coisas específicas pra saber:
 
 - **O driver de acessibilidade de GUI tem backends reais pra Windows (UI
   Automation) e Linux (AT-SPI), mas a gramática `.cjtr` ainda não tem como
@@ -266,6 +281,8 @@ confiar nisso:
   `conjecture/materializations/` existe depois do `conjecture init`, mas
   nada escreve nada lá ainda) está explicitamente fora do escopo do
   trabalho de persistência feito até agora.
+
+</details>
 
 ## Licença
 
