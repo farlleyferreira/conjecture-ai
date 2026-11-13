@@ -49,7 +49,9 @@ Specify a behavior precisely with the user, then prove the real implementation m
 
 3. **Verify the draft, every time you change it.** Call the `verify` MCP tool with the file's path. If it fails, read the report, fix the file, call `verify` again. Loop with the user - this is where you debate and refine the rule itself, before any implementation exists.
 
-4. **Stop and have the user sign the agreed specification themselves.** Once the user is satisfied with the content, tell them to run, in their own terminal:
+4. **Optional: stress-test the agreed spec with an independent adversary before asking for a signature.** You and the user just spent this whole conversation convincing each other the spec is right - that is correlated reasoning, and it can share a blind spot. If the user has a local `ollama`/`llama-server` running, offer `conjecture attack <file.cjtr> <hypothesis-id> --runtime ollama --model <name>` (or `conjecture swarm` for several strategies at once) per hypothesis/law - a separate, local model that only ever sees the hypothesis's own given/then and interface (never this conversation), trying to find a logical counterexample to the rule's own text. It never runs real code - its claim is not mechanically verified - so read what it reports yourself; a real-sounding counterexample is worth taking back to the user and step 2/3, a vague or wrong one is not.
+
+5. **Stop and have the user sign the agreed specification themselves.** Once the user is satisfied with the content, tell them to run, in their own terminal:
 
    ```
    conjecture sign --user <their name> --confirmed conjecture/phenomena/<area>/<phenomenon>.cjtr
@@ -57,11 +59,11 @@ Specify a behavior precisely with the user, then prove the real implementation m
 
    **Never run `conjecture sign --confirmed` or `conjecture promote` yourself - not through this server (there is no such tool here on purpose) and not by shelling out to the CLI either, even if you have shell access.** Confirming a specification is a decision this project reserves for a human, by design; running the command yourself on the user's behalf defeats the entire point of that boundary. Wait for the user to confirm they ran it, then call the `status` tool on the file and check `signed`/`confirmed` are both true before moving on.
 
-5. **Write the real implementation.** Once signed, write the actual implementation code - with your own normal coding ability, in whatever language/framework the project already uses. Do not use `conjecture implement`/`work`/`attack`/`swarm`: those drive conjecture's own separate, built-in LLM loop, which is a different, already-complete feature of this tool - not what this workflow is for. Package the implementation as a container image + command that reads `conjecture_input.json` (flat JSON, keys like `input.<name>`) and writes `conjecture_output.json` the same way.
+6. **Write the real implementation.** Once signed, write the actual implementation code - with your own normal coding ability, in whatever language/framework the project already uses. Do not use `conjecture implement`/`work`: they drive conjecture's own separate, built-in implementing LLM, which can only ever produce a disposable, single-file Python script - never a patch to this project's own real code - and you already do this job better: no separate credential, full visibility, output you can actually keep. (They also now refuse outright on a hypothesis/law whose input domain is not fully boundable, for the same reason you should write that one yourself: a disposable oracle tested only against a directed sample of its domain is not trustworthy evidence either way.) Package the implementation as a container image + command that reads `conjecture_input.json` (flat JSON, keys like `input.<name>`) and writes `conjecture_output.json` the same way.
 
-6. **Check it for real.** Call the `check` MCP tool with the file's path, the image name, and the command to run inside it. If it reports non-conformant, read the counterexample it returns, fix the implementation for real, rebuild the image, and call `check` again. Repeat until conformant - never adjust the specification to make a failing implementation pass; if the rule itself turns out to be wrong, go back to step 2 and 3 with the user, then get it re-signed.
+7. **Check it for real.** Call the `check` MCP tool with the file's path, the image name, and the command to run inside it. If it reports non-conformant, read the counterexample it returns, fix the implementation for real, rebuild the image, and call `check` again. Repeat until conformant - never adjust the specification to make a failing implementation pass; if the rule itself turns out to be wrong, go back to step 2 and 3 with the user, then get it re-signed.
 
-7. **Report the final state.** Call `status` on the file and summarize it for the user: signed by whom, and each hypothesis/law's own checked state.
+8. **Report the final state.** Call `status` on the file and summarize it for the user: signed by whom, and each hypothesis/law's own checked state.
 
 ## Everything else this server exposes (all pure reads, call anytime)
 
