@@ -1,91 +1,34 @@
 # conjecture-ai
 
-## What is this?
+**Write a rule in plain words. `conjecture` proves, for real, whether your
+code obeys it.**
 
-Say you have a business rule: *"orders over $100 ship free, unless it's a
-subscription order."* Normally, the only way to know whether your code
+[![CI](https://github.com/farlleyferreira/conjecture-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/farlleyferreira/conjecture-ai/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+## The simplest way to think about it
+
+Imagine a rule for a game: *"if you roll a 6, you get another turn."* You
+don't have to read the whole rulebook to find out if that's true - you just
+play the game, roll a 6, and watch what happens.
+
+`conjecture` does that for software rules. You write the rule once, in
+plain words, in a small file - no code. `conjecture` then plays the game
+for you: it builds real test cases from your rule, runs your *actual*
+program against them inside a locked-down sandbox, and tells you
+**conformant** (it holds) or **non-conformant** (here's the exact input
+that broke it). It never takes the code's word for it. It always watches
+what the code actually does.
+
+## Say it once, in plain words
+
+Here's a real business rule: *"orders over $100 ship free, unless it's a
+subscription order."* Normally the only way to know whether your code
 actually does that is to read the code, or write a unit test by hand and
-hope you covered the right cases.
-
-`conjecture` flips that around: you write the rule itself, once, in a small
-structured file (no code) - and `conjecture` generates test cases from it,
-runs your *real* implementation inside a sandboxed container, and tells you
-**conformant** or **non-conformant**, with the actual input that broke it if
-it didn't hold. It never trusts the code's own claims about itself - it
-always runs it for real and checks the real output.
-
-On top of that one core loop, it can also: ask an LLM to draft the rule or
-write/fix the implementation for you, run adversarial LLM "attacks" that try
-to find a case where the rule breaks, and promote a rule through a maturity
-ladder (Hypothesis → Thesis → Theory → Law) as more evidence accumulates -
-with every human decision along the way recorded in a local, tamper-evident
-ledger, not just printed and forgotten.
-
-## Build
-
-This repo has exactly one CGO dependency (`github.com/smacker/go-tree-sitter`,
-used for dependency analysis), which means the whole binary needs a real C
-compiler for whatever OS you build it for:
-
-```bash
-CGO_ENABLED=1 go build -o conjecture ./cmd/conjecture
-```
-
-- **Linux/macOS**: works directly if `gcc`/`clang` is installed.
-- **Windows**: there is no native gcc. Build it inside WSL2 (install
-  `golang-go` and `gcc` there), or inside a `golang` container via
-  Podman/Docker:
-  ```bash
-  podman run --rm -v "$(pwd):/src" -w /src golang:1.25 \
-    go build -o conjecture ./cmd/conjecture
-  ```
-
-## Runtime requirements
-
-- **A container runtime on `PATH` named `docker`.** `conjecture check`/
-  `implement`/`work` run the implementation under test inside a container
-  with `--network none`. Real Docker works as-is; real Podman works behind
-  a one-line shim (`docker` isn't aliased to it by default):
-  ```bash
-  printf '#!/bin/sh\nexec podman "$@"\n' | sudo tee /usr/local/bin/docker
-  sudo chmod +x /usr/local/bin/docker
-  ```
-- **An LLM provider, only for `draft`/`implement`/`work`/`attack`/`swarm`**
-  (writing a spec from a plain-language ask, writing/fixing implementation
-  code, or attacking a hypothesis). Switching providers is just a `--provider`
-  flag and that provider's own env vars - no code change needed. Set one of:
-  - `ANTHROPIC_API_KEY` (provider `anthropic`, the default)
-  - `DEEPSEEK_API_KEY` (provider `deepseek`)
-  - a local `ollama serve` or `llama-server` (provider `llamacpp` for
-    `implement`/`work`; `--runtime ollama`/`--runtime llamacpp` for
-    `attack`/`swarm`) - no key needed, reachable at `http://localhost:8080`
-    (llama.cpp) or `http://localhost:11434` (Ollama) by default.
-  - any provider speaking OpenAI's own Chat Completions wire format - verified
-    against nine: `OPENAI_API_KEY`+`OPENAI_MODEL` (provider `openai`),
-    `GEMINI_API_KEY`+`GEMINI_MODEL` (provider `gemini`), `GROK_API_KEY`+
-    `GROK_MODEL` (provider `grok`), `LLAMA_API_KEY`+`LLAMA_MODEL` (provider
-    `llama-api` - Meta's own hosted API, distinct from the local `llamacpp`
-    above), `MISTRAL_API_KEY`+`MISTRAL_MODEL` (provider `mistral`),
-    `COHERE_API_KEY`+`COHERE_MODEL` (provider `cohere`), `BEDROCK_API_KEY`+
-    `BEDROCK_MODEL`+`BEDROCK_REGION` (provider `bedrock`),
-    `AZURE_OPENAI_API_KEY`+`AZURE_OPENAI_MODEL`+`AZURE_OPENAI_RESOURCE`
-    (provider `azure-openai`), or `DASHSCOPE_API_KEY`+`DASHSCOPE_MODEL`+
-    `DASHSCOPE_REGION` (`intl`|`cn`) (provider `dashscope`, serves Qwen).
-    A provider exposing this same wire format but not in this list needs a
-    small preset added (base URL + env var names, no new client logic) - see
-    `internal/llmclient/openaicompatible.go`.
-  `conjecture check`/`verify`/`sign`/`promote`/`context` need none of this -
-  they only run already-written specs against already-written code.
-
-## A worked example
-
-```bash
-conjecture init   # conjecture/phenomena/, conjecture/materializations/, .conjecture/
-```
-
-Write the rule at `conjecture/phenomena/checkout/shipping.cjtr`:
+hope you thought of the right cases.
 
 ```yaml
+# conjecture/phenomena/checkout/shipping.cjtr
 conjecture: 1.0.0
 
 phenomenon: shipping
@@ -113,10 +56,25 @@ rules:
           - {discounted subtotal: 150.00, order type: subscription, shipping fee: 7.50}
 ```
 
-The "implementation" is any container image + command that reads
-`conjecture_input.json` (flat JSON, keys like `input.order_type`) and writes
-`conjecture_output.json` the same way. Here's a real one - with a real bug,
-flat $7.50 no matter what:
+That's it. No code. Just the rule, in words a non-programmer could read
+out loud.
+
+## What `conjecture` also does, once that one loop exists
+
+- Asks an LLM to **draft** the rule for you, or to **write/fix** the
+  implementation until it conforms.
+- Runs adversarial LLM **attacks** (one at a time, or a whole swarm) that
+  actively try to find a case where the rule breaks.
+- **Promotes** a rule through a maturity ladder - Hypothesis → Thesis →
+  Theory → Law - as real evidence accumulates.
+- Records every human decision along the way (who signed it, who promoted
+  it, when) in a local, tamper-evident ledger - never just printed to a
+  terminal and forgotten.
+
+## See it catch a real bug
+
+Here's an "implementation" with a real bug: it charges $7.50 shipping no
+matter what.
 
 ```python
 # adapter.py
@@ -164,9 +122,93 @@ checkout::shipping::free-above: above the threshold shipping is free: conformanc
 $ conjecture sign --user alice --confirmed conjecture/phenomena/checkout/shipping.cjtr
 ```
 
-That's the whole core loop: write the rule once, point it at real code,
-get a real verdict - and a signed, attributable record that a human looked
-at it.
+Write the rule once, point it at real code, get a real verdict - and a
+signed, attributable record that a human looked at it.
+
+## Quick start
+
+> [!NOTE]
+> There's no pre-built download yet - you build the one binary yourself.
+> It's one command, and it's the same command on every OS.
+
+This repo has exactly one CGO dependency
+(`github.com/smacker/go-tree-sitter`, used for dependency analysis), so the
+binary needs a real C compiler for whatever OS you build it for:
+
+```bash
+CGO_ENABLED=1 go build -o conjecture ./cmd/conjecture
+```
+
+- **Linux/macOS**: works directly if `gcc`/`clang` is installed.
+- **Windows**: there is no native gcc. Build it inside WSL2 (install
+  `golang-go` and `gcc` there), or inside a `golang` container via
+  Podman/Docker:
+  ```bash
+  podman run --rm -v "$(pwd):/src" -w /src golang:1.25 \
+    go build -o conjecture ./cmd/conjecture
+  ```
+
+You also need **a container runtime on `PATH` named `docker`** -
+`conjecture check`/`implement`/`work` run the implementation under test
+inside a container with `--network none`. Real Docker works as-is; real
+Podman works behind a one-line shim (`docker` isn't aliased to it by
+default):
+
+```bash
+printf '#!/bin/sh\nexec podman "$@"\n' | sudo tee /usr/local/bin/docker
+sudo chmod +x /usr/local/bin/docker
+```
+
+Then:
+
+```bash
+conjecture init   # creates conjecture/phenomena/, conjecture/materializations/, .conjecture/
+```
+
+Write a rule, run `conjecture check` against your real code - that's the
+whole worked example above, start to finish.
+
+> [!NOTE]
+> `conjecture check`/`verify`/`sign`/`promote`/`context` need no LLM at all
+> - they only run already-written rules against already-written code.
+> Only `draft`/`implement`/`work`/`attack`/`swarm` need one, and switching
+> providers is just a `--provider` flag plus that provider's own API key -
+> no code change, ever. Set one of: `ANTHROPIC_API_KEY` (provider
+> `anthropic`, the default), `DEEPSEEK_API_KEY` (provider `deepseek`), a
+> local `ollama serve`/`llama-server` (provider `llamacpp`, no key needed),
+> or any provider speaking OpenAI's own Chat Completions format - verified
+> against nine: `openai`, `gemini`, `grok`, `llama-api` (Meta's hosted API,
+> distinct from local `llamacpp`), `mistral`, `cohere`, `bedrock`,
+> `azure-openai`, `dashscope` (serves Qwen) - each just its own env vars,
+> listed in [`internal/llmclient/openaicompatible.go`](internal/llmclient/openaicompatible.go).
+
+## Commands
+
+| Command | Does |
+|---|---|
+| `init` | Creates the repo layout (`conjecture/phenomena/`, `conjecture/materializations/`, gitignored `.conjecture/`). |
+| `draft` | Asks an LLM to draft a `.cjtr` spec from a plain-language request. |
+| `sign` | Records authorship/confirmation on a `.cjtr` file; `--confirmed` also records a real decision-ledger entry. |
+| `verify` | Checks a spec's own worked examples against its own hypotheses - no sandbox, no implementation. |
+| `check` | Runs a hypothesis's directed-sampling conformance cycle against a real sandboxed implementation. |
+| `implement` / `work` | Asks an LLM to write/fix implementation code until it conforms (or the round budget runs out); `work` pulls from the queue instead of taking a file directly. |
+| `attack` / `swarm` | Runs one or several adversarial-LLM attacks against a hypothesis, looking for a counterexample. |
+| `promote` | Promotes a hypothesis/law to Theory or Law once its real evidence conditions hold; records a decision-ledger entry. |
+| `law` | Resolves a conflict between a user-defined law and a formal proof or another law. |
+| `context` | `list`/`resume`/`open`/`origin`/`diff`/`restore`/`resolve-conflict` over a saved verification context. |
+| `base` | Attaches/searches a knowledge base (norms, definitions, references) scoped to a project or area. |
+| `queue` | The three-tier (blocker/current-task/background) work queue `work` consumes; `review` lists items it couldn't act on automatically. |
+| `results` | Imports a target system's own already-produced JUnit XML or TAP results. |
+| `graph` | Reads/sets a context-engine node's weight/relevance/confidence. |
+| `optimize` | Applies a calibration proposal - always requires explicit `--approved`. |
+| `settings` | Checks a value against a team-configured floor (never a ceiling). |
+| `translate` | Generates a hypothesis's deterministic `# pt:` comment. |
+| `deps` | Checks Go source for forbidden imports. |
+| `watch` | Polls a directory and re-verifies any `.cjtr` file that changed. |
+| `mcp` | Runs conjecture as an MCP server. |
+
+Run any command with no arguments (or `--help`-shaped nonsense) to see its
+own real usage string.
 
 ## What this is *not* for
 
@@ -213,34 +255,6 @@ on it:
 - **Materialization content generation** (a `conjecture/materializations/`
   path exists after `conjecture init`, but nothing writes anything there
   yet) is explicitly out of scope of the persistence work done so far.
-
-## Commands
-
-| Command | Does |
-|---|---|
-| `init` | Creates the repo layout (`conjecture/phenomena/`, `conjecture/materializations/`, gitignored `.conjecture/`). |
-| `draft` | Asks an LLM to draft a `.cjtr` spec from a plain-language request. |
-| `sign` | Records authorship/confirmation on a `.cjtr` file; `--confirmed` also records a real decision-ledger entry. |
-| `verify` | Checks a spec's own worked examples against its own hypotheses - no sandbox, no implementation. |
-| `check` | Runs a hypothesis's directed-sampling conformance cycle against a real sandboxed implementation. |
-| `implement` / `work` | Asks an LLM to write/fix implementation code until it conforms (or the round budget runs out); `work` pulls from the queue instead of taking a file directly. |
-| `attack` / `swarm` | Runs one or several adversarial-LLM attacks against a hypothesis, looking for a counterexample. |
-| `promote` | Promotes a hypothesis/law to Theory or Law once its real evidence conditions hold; records a decision-ledger entry. |
-| `law` | Resolves a conflict between a user-defined law and a formal proof or another law. |
-| `context` | `list`/`resume`/`open`/`origin`/`diff`/`restore`/`resolve-conflict` over a saved verification context. |
-| `base` | Attaches/searches a knowledge base (norms, definitions, references) scoped to a project or area. |
-| `queue` | The three-tier (blocker/current-task/background) work queue `work` consumes. |
-| `results` | Imports a target system's own already-produced JUnit XML or TAP results. |
-| `graph` | Reads/sets a context-engine node's weight/relevance/confidence. |
-| `optimize` | Applies a calibration proposal - always requires explicit `--approved`. |
-| `settings` | Checks a value against a team-configured floor (never a ceiling). |
-| `translate` | Generates a hypothesis's deterministic `# pt:` comment. |
-| `deps` | Checks Go source for forbidden imports. |
-| `watch` | Polls a directory and re-verifies any `.cjtr` file that changed. |
-| `mcp` | Runs conjecture as an MCP server. |
-
-Run any command with no arguments (or `--help`-shaped nonsense) to see its
-own real usage string.
 
 ## License
 
