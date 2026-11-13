@@ -1,7 +1,7 @@
 // Package persistence implements the persistence capability (openspec/
 // specs/persistence/spec.md): where conjecture's non-git-tracked state
 // lives - a single local, per-repository SQLite database, outside the
-// git repository, at a fixed per-OS path - and the hash-chaining
+// git repository, at a per-OS, per-user path - and the hash-chaining
 // mechanism every append-only table in that database uses.
 //
 // This package only resolves the path and opens the database; it does
@@ -50,11 +50,17 @@ func RepoID(repoRoot string) (string, error) {
 	return hex.EncodeToString(sum[:])[:16], nil
 }
 
-// LocalDataDir returns the per-OS local data directory for the
-// repository rooted at repoRoot, exactly as the persistence spec names
-// it: "/var/lib/conjecture/<repo-id>/" on Linux, "/Library/Application
-// Support/conjecture/<repo-id>/" on macOS, and
-// "%ProgramData%\conjecture\<repo-id>\" on Windows.
+// LocalDataDir returns the per-OS, per-user local data directory for
+// the repository rooted at repoRoot, exactly as the persistence spec
+// names it: "$XDG_DATA_HOME/conjecture/<repo-id>/" (falling back to
+// "$HOME/.local/share/conjecture/<repo-id>/") on Linux, "$HOME/Library/
+// Application Support/conjecture/<repo-id>/" on macOS, and
+// "%LOCALAPPDATA%\conjecture\<repo-id>\" on Windows - each platform's
+// own standard per-user application-data location, writable by
+// whichever account is running conjecture without administrator
+// privileges. (See openspec/changes/persistence-user-writable-data-dir:
+// the previous root/admin-owned paths failed for real for an ordinary
+// user, confirmed by running the built binary as a non-root user.)
 func LocalDataDir(repoRoot string) (string, error) {
 	return localDataDir(repoRoot, runtime.GOOS)
 }
@@ -73,13 +79,25 @@ func localDataDir(repoRoot, goos string) (string, error) {
 	// even when built for Linux, and vice versa).
 	switch goos {
 	case "linux":
-		return "/var/lib/conjecture/" + id, nil
-	case "darwin":
-		return "/Library/Application Support/conjecture/" + id, nil
-	case "windows":
-		base := os.Getenv("ProgramData")
+		base := os.Getenv("XDG_DATA_HOME")
 		if base == "" {
-			base = `C:\ProgramData`
+			home := os.Getenv("HOME")
+			if home == "" {
+				return "", fmt.Errorf("persistence: HOME is not set (needed to resolve the per-user data directory; XDG_DATA_HOME is not set either)")
+			}
+			base = strings.TrimRight(home, "/") + "/.local/share"
+		}
+		return strings.TrimRight(base, "/") + "/conjecture/" + id, nil
+	case "darwin":
+		home := os.Getenv("HOME")
+		if home == "" {
+			return "", fmt.Errorf("persistence: HOME is not set (needed to resolve the per-user data directory)")
+		}
+		return strings.TrimRight(home, "/") + "/Library/Application Support/conjecture/" + id, nil
+	case "windows":
+		base := os.Getenv("LOCALAPPDATA")
+		if base == "" {
+			return "", fmt.Errorf("persistence: LOCALAPPDATA is not set (needed to resolve the per-user data directory)")
 		}
 		return strings.TrimRight(base, `\`) + `\conjecture\` + id, nil
 	default:

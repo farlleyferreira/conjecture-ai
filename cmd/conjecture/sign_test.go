@@ -45,9 +45,10 @@ func TestRunSign_SignsFileInPlace(t *testing.T) {
 	path := writeFixture(t, fixtureCjtr)
 	// --confirmed also records a decisionledger entry - swap in a
 	// temporary store via the test hook rather than letting it resolve
-	// the real per-OS system path (e.g. "/var/lib/conjecture" on
-	// Linux), which this test's own process is not guaranteed to be
-	// able to create - see [openDecisionStore]'s own doc comment.
+	// the real per-OS, per-user data directory (e.g. under
+	// "$HOME/.local/share/conjecture" on Linux), which this test
+	// should not pollute with its own run - see [openDecisionStore]'s
+	// own doc comment.
 	// runSign closes whatever openDecisionStore returns, so this opens
 	// a fresh connection to the same on-disk store each call, rather
 	// than handing back one shared *sql.DB a later Close would break.
