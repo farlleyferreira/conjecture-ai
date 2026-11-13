@@ -48,6 +48,52 @@ func TestRunInit_DefaultsToCurrentDirectory(t *testing.T) {
 	}
 }
 
+func TestRunInit_ScaffoldsOrchestrationSkill(t *testing.T) {
+	dir := t.TempDir()
+	var stdout, stderr bytes.Buffer
+
+	code := runInit([]string{"--dir", dir}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runInit returned exit code %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "orchestration skill") {
+		t.Errorf("stdout = %q, want it to report the skill was written", stdout.String())
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(skillRelPath)))
+	if err != nil {
+		t.Fatalf("reading scaffolded skill returned unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(string(content), "---\nname: conjecture-workflow\n") {
+		t.Errorf("scaffolded skill does not start with the expected frontmatter, got:\n%s", content)
+	}
+}
+
+func TestRunInit_DoesNotOverwriteExistingSkillFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, filepath.FromSlash(skillRelPath))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll returned unexpected error: %v", err)
+	}
+	const customized = "a user's own customized skill content"
+	if err := os.WriteFile(path, []byte(customized), 0o644); err != nil {
+		t.Fatalf("WriteFile returned unexpected error: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := runInit([]string{"--dir", dir}, &stdout, &stderr); code != 0 {
+		t.Fatalf("runInit returned exit code %d, stderr: %s", code, stderr.String())
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading skill file returned unexpected error: %v", err)
+	}
+	if string(content) != customized {
+		t.Errorf("skill file content = %q, want the user's own customized content left untouched", content)
+	}
+}
+
 func TestRunInit_UnknownFlagIsUsageError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := runInit([]string{"--bogus"}, &stdout, &stderr)
