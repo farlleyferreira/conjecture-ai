@@ -5,25 +5,51 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
 	"github.com/farlleyferreira/conjecture-ai/internal/contextcomposition"
+	"github.com/farlleyferreira/conjecture-ai/internal/decisionledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
+	"github.com/pmezard/go-difflib/difflib"
 )
 
-const contextUsage = "usage: conjecture context <list|resume|open|restore|resolve-conflict> [args]"
+const contextUsage = "usage: conjecture context <list|resume|open|origin|diff|restore|resolve-conflict> [args]"
 
-// runContext implements "conjecture context <subcommand>" for the four
-// of context-composition's six lifecycle commands this codebase has
-// storage for (list/resume/open/restore - see
-// internal/contextcomposition/store.go). "origin" and "diff" are not
-// wired here: the product proposal document's own worked-example table
-// describes origin's output as "decision, base, excerpt and who
-// signed" and diff's as "specs, decisions and bases that changed" -
-// both need real integration across spec-judge, knowledge-bases, and
-// signing this codebase does not yet compose together, not just a
-// store lookup.
+// runContext implements "conjecture context <subcommand>" for all six
+// of context-composition's own lifecycle commands (list/resume/open/
+// restore - see internal/contextcomposition/store.go - plus origin
+// and diff, below).
+//
+// Honesty note on origin/diff: the specification itself
+// (context-composition's own spec.md) names only that these two
+// commands must exist, plus one concrete scenario ("a user can still
+// diff the superseded context against the new one") - it gives no
+// output shape for either. The lost product-proposal document's own
+// paraphrase ("decision, base, excerpt and who signed" for origin;
+// "specs, decisions and bases that changed" for diff) is not treated
+// as a specification here - it was never verified, and this codebase
+// has already spent one session confirming it is permanently
+// unrecoverable. Instead, each is grounded in what this codebase can
+// actually compose for real, confirmed with the user before writing
+// either:
+//   - diff compares two versions' own real stored Content via a real
+//     unified-diff algorithm (github.com/pmezard/go-difflib, already a
+//     transitive dependency via testify, not a new one) - directly
+//     answering the one scenario the specification actually gives.
+//   - origin reports a context's real source .cjtr file's own
+//     "signed" block ([cjtr.ReadSigned] - user/tool/date/confirmed)
+//     together with every [decisionledger] decision whose own Subject
+//     exactly matches that file's path (joinPhenomenonPath's own
+//     convention) - two pieces of real, already-tracked provenance
+//     this codebase did not have composed together until now. Decision
+//     matching is an exact string match on Subject, not a fuzzy one: a
+//     decision recorded against a differently-spelled path for the
+//     same file (a different relative prefix, an absolute path) will
+//     not be found - a disclosed limitation, not a guess at resolving
+//     it.
 //
 // "list" now also filters by area and by a created-at date range (see
 // contextList's own doc comment) - area is auto-derived, not asked of
@@ -59,7 +85,7 @@ func runContext(args []string, stdout, stderr io.Writer) int {
 	}
 	subcommand, rest := args[0], args[1:]
 	switch subcommand {
-	case "list", "resume", "open", "restore":
+	case "list", "resume", "open", "origin", "diff", "restore":
 	case "resolve-conflict":
 		return contextResolveConflict(rest, stdout, stderr)
 	default:
@@ -91,6 +117,10 @@ func runContext(args []string, stdout, stderr io.Writer) int {
 		return contextResume(db, rest, stdout, stderr)
 	case "open":
 		return contextOpen(db, rest, stdout, stderr)
+	case "origin":
+		return contextOrigin(db, repoRoot, rest, stdout, stderr)
+	case "diff":
+		return contextDiff(db, rest, stdout, stderr)
 	case "restore":
 		return contextRestore(db, rest, stdout, stderr)
 	default:
@@ -216,6 +246,139 @@ func contextOpen(db *sql.DB, args []string, stdout, stderr io.Writer) int {
 	}
 	_, _ = fmt.Fprintf(stdout, "%s@%s (read-only)\n%s\n", v.ContextName, v.Tag(), v.Content)
 	return 0
+}
+
+// contextOrigin implements "conjecture context origin <name>" - see
+// this file's own doc comment for what "origin" means here and why.
+func contextOrigin(db *sql.DB, repoRoot string, args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 {
+		_, _ = fmt.Fprintln(stderr, "usage: conjecture context origin <name>")
+		return 1
+	}
+	name := args[0]
+
+	ctx, err := contextcomposition.GetContext(db, name)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	_, _ = fmt.Fprintf(stdout, "%s (area %q)\n", ctx.ID, ctx.Area)
+
+	area, phenomenon, ok := splitPhenomenonID(name)
+	if !ok {
+		_, _ = fmt.Fprintf(stdout, "source file: unknown - %q is not an area::phenomenon composite ID\n", name)
+		return 0
+	}
+	path := joinPhenomenonPath(repoRoot, area, phenomenon)
+
+	f, err := loadFicha(path)
+	if err != nil {
+		_, _ = fmt.Fprintf(stdout, "source file: %s (could not be loaded: %v)\n", path, err)
+	} else if signed, err := cjtr.ReadSigned(f.root); err != nil {
+		_, _ = fmt.Fprintf(stdout, "source file: %s (signed block could not be read: %v)\n", path, err)
+	} else if signed == nil {
+		_, _ = fmt.Fprintf(stdout, "source file: %s (not signed)\n", path)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "source file: %s\nsigned by %s (tool %s, date %s, confirmed %v)\n",
+			path, signed.User, signed.Tool, signed.Date, signed.Confirmed)
+	}
+
+	if err := decisionledger.EnsureSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	all, err := decisionledger.List(db)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	found := false
+	for _, d := range all {
+		if d.Subject != path {
+			continue
+		}
+		found = true
+		_, _ = fmt.Fprintf(stdout, "decision: %s %q by %s on %s\n", d.Kind, d.Determination, d.DecidedBy, d.CreatedAt.Format(time.RFC3339))
+	}
+	if !found {
+		_, _ = fmt.Fprintln(stdout, "no decisions recorded against this source file")
+	}
+	return 0
+}
+
+// splitPhenomenonID splits a context's own ID back into its area and
+// phenomenon - the exact inverse of [cjtr.ComposeID]'s own area/
+// phenomenon convention every real context-creating caller (check.go's
+// syncCheckContext) already uses, ok is false for anything else.
+func splitPhenomenonID(id string) (area, phenomenon string, ok bool) {
+	area, phenomenon, found := strings.Cut(id, "::")
+	if !found || area == "" || phenomenon == "" || strings.Contains(phenomenon, "::") {
+		return "", "", false
+	}
+	return area, phenomenon, true
+}
+
+// contextDiff implements "conjecture context diff <name>[@v<N>]
+// <name>[@v<N>]" - a real unified diff between two context versions'
+// own stored Content (see this file's own doc comment for why a
+// unified diff, not the lost document's own unverified output shape).
+// Each argument names either a context's latest version (a bare
+// name) or one exact past version ("name@vN") - [contextcomposition.
+// ParseVersionRef]'s own two forms, the same ones "conjecture context
+// open" already accepts.
+func contextDiff(db *sql.DB, args []string, stdout, stderr io.Writer) int {
+	usage := "usage: conjecture context diff <name>[@v<N>] <name>[@v<N>]"
+	if len(args) != 2 {
+		_, _ = fmt.Fprintln(stderr, usage)
+		return 1
+	}
+
+	a, err := resolveContextVersion(db, args[0])
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	b, err := resolveContextVersion(db, args[1])
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+
+	if a.Content == b.Content {
+		_, _ = fmt.Fprintf(stdout, "%s@%s and %s@%s are identical\n", a.ContextName, a.Tag(), b.ContextName, b.Tag())
+		return 0
+	}
+
+	text, err := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
+		A:        difflib.SplitLines(a.Content),
+		FromFile: a.ContextName + "@" + a.Tag(),
+		B:        difflib.SplitLines(b.Content),
+		ToFile:   b.ContextName + "@" + b.Tag(),
+		Context:  3,
+	})
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	_, _ = fmt.Fprint(stdout, text)
+	return 0
+}
+
+// resolveContextVersion resolves one "conjecture context diff" (or
+// future caller's) argument - a bare context name (its latest
+// version, via [contextcomposition.Resume]) or "name@vN" (that exact
+// version, via [contextcomposition.Open]) - the same two forms
+// [contextcomposition.ParseVersionRef] already distinguishes by
+// whether it parsed a nonzero Seq.
+func resolveContextVersion(db *sql.DB, arg string) (contextcomposition.Version, error) {
+	ref, err := contextcomposition.ParseVersionRef(arg)
+	if err != nil {
+		return contextcomposition.Version{}, err
+	}
+	if ref.Seq == 0 {
+		return contextcomposition.Resume(db, ref.Name)
+	}
+	return contextcomposition.Open(db, ref)
 }
 
 // contextRestore implements "conjecture context restore <name>" -
