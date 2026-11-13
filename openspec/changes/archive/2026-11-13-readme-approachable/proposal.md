@@ -10,6 +10,9 @@ sentence, a philosophy block, a "see it in action" transcript, then
 Quick Start - while keeping every fact grounded in this project's own
 real commands and behavior, unchanged.
 
+Follow-up explicit direction: the default `README.md` should be in
+pt-BR, with an option to read it in English - not the other way around.
+
 ## What Changes
 
 - `README.md` restructured: adds a one-sentence tagline, a plain-words
@@ -24,6 +27,11 @@ real commands and behavior, unchanged.
   already real but not previously mentioned there).
 - Added a real badge for the existing `ci.yml` workflow and a static MIT
   license badge - no new CI job, nothing invented.
+- `README.md` is now the pt-BR translation (prose only - every code
+  block, command name, flag, env var, and file path left byte-identical
+  to the English version, never translated); the prior English content
+  moved to a new `README.en.md`. Each file carries a one-line language
+  switcher at the top linking to the other.
 
 ## Capabilities
 
@@ -37,7 +45,7 @@ None - documentation only, no behavior change. `skip_specs: true`.
 
 ## Impact
 
-- Affected paths: `README.md`.
+- Affected paths: `README.md`, `README.en.md` (new).
 - No code or test changes; `go build`/`go vet`/`go test ./...` all pass
   unchanged (docs-only).
 - Verified every link added or kept resolves to something real in this

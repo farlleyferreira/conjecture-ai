@@ -1,31 +1,33 @@
+🇧🇷 **Português** | [🇺🇸 English](README.en.md)
+
 # conjecture-ai
 
-**Write a rule in plain words. `conjecture` proves, for real, whether your
-code obeys it.**
+**Escreva uma regra em palavras simples. O `conjecture` prova, de verdade,
+se seu código obedece a ela.**
 
 [![CI](https://github.com/farlleyferreira/conjecture-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/farlleyferreira/conjecture-ai/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## The simplest way to think about it
+## A forma mais simples de pensar nisso
 
-Imagine a rule for a game: *"if you roll a 6, you get another turn."* You
-don't have to read the whole rulebook to find out if that's true - you just
-play the game, roll a 6, and watch what happens.
+Imagine uma regra de um jogo: *"se você tirar 6, joga de novo."* Você não
+precisa ler o manual inteiro pra saber se isso é verdade - só precisa
+jogar, tirar um 6, e ver o que acontece.
 
-`conjecture` does that for software rules. You write the rule once, in
-plain words, in a small file - no code. `conjecture` then plays the game
-for you: it builds real test cases from your rule, runs your *actual*
-program against them inside a locked-down sandbox, and tells you
-**conformant** (it holds) or **non-conformant** (here's the exact input
-that broke it). It never takes the code's word for it. It always watches
-what the code actually does.
+O `conjecture` faz isso com regras de software. Você escreve a regra uma
+vez, em palavras simples, num arquivo pequeno - sem código. O `conjecture`
+então joga o jogo por você: monta casos de teste reais a partir da sua
+regra, executa seu programa *de verdade* contra eles dentro de uma sandbox
+isolada, e te diz **conformant** (a regra se sustenta) ou **non-conformant**
+(aqui está a entrada exata que quebrou). Ele nunca confia na palavra do
+código. Ele sempre observa o que o código realmente faz.
 
-## Say it once, in plain words
+## Diga uma vez, em palavras simples
 
-Here's a real business rule: *"orders over $100 ship free, unless it's a
-subscription order."* Normally the only way to know whether your code
-actually does that is to read the code, or write a unit test by hand and
-hope you thought of the right cases.
+Aqui está uma regra de negócio real: *"pedidos acima de $100 têm frete
+grátis, exceto se for um pedido de assinatura."* Normalmente a única forma
+de saber se seu código realmente faz isso é ler o código, ou escrever um
+teste unitário na mão e esperar ter pensado nos casos certos.
 
 ```yaml
 # conjecture/phenomena/checkout/shipping.cjtr
@@ -56,25 +58,25 @@ rules:
           - {discounted subtotal: 150.00, order type: subscription, shipping fee: 7.50}
 ```
 
-That's it. No code. Just the rule, in words a non-programmer could read
-out loud.
+Só isso. Sem código. Só a regra, em palavras que até alguém que não
+programa conseguiria ler em voz alta.
 
-## What `conjecture` also does, once that one loop exists
+## O que o `conjecture` também faz, a partir desse um loop
 
-- Asks an LLM to **draft** the rule for you, or to **write/fix** the
-  implementation until it conforms.
-- Runs adversarial LLM **attacks** (one at a time, or a whole swarm) that
-  actively try to find a case where the rule breaks.
-- **Promotes** a rule through a maturity ladder - Hypothesis → Thesis →
-  Theory → Law - as real evidence accumulates.
-- Records every human decision along the way (who signed it, who promoted
-  it, when) in a local, tamper-evident ledger - never just printed to a
-  terminal and forgotten.
+- Pede a um LLM pra **rascunhar** a regra pra você, ou pra **escrever/
+  corrigir** a implementação até ela ficar conforme.
+- Executa **ataques** adversariais de LLM (um por vez, ou um swarm inteiro)
+  que tentam ativamente achar um caso em que a regra quebre.
+- **Promove** uma regra por uma escada de maturidade - Hypothesis → Thesis
+  → Theory → Law - conforme evidência real se acumula.
+- Registra toda decisão humana pelo caminho (quem assinou, quem promoveu,
+  quando) num ledger local à prova de adulteração - nunca só impresso num
+  terminal e esquecido.
 
-## See it catch a real bug
+## Veja ele pegar um bug real
 
-Here's an "implementation" with a real bug: it charges $7.50 shipping no
-matter what.
+Aqui está uma "implementação" com um bug real: ela cobra $7.50 de frete,
+não importa o quê.
 
 ```python
 # adapter.py
@@ -97,8 +99,8 @@ checkout::shipping::free-above: above the threshold shipping is free: conformanc
 checkout::shipping::free-above: above the threshold shipping is free:   counterexample: map[input.discounted_subtotal:150.00 input.order_type:regular output.shipping_fee:0.00]
 ```
 
-Caught for real - a $150 regular order should ship free, and this
-implementation never does. Fix the bug for real:
+Pego de verdade - um pedido regular de $150 devia ter frete grátis, e essa
+implementação nunca faz isso. Corrija o bug de verdade:
 
 ```python
 # adapter.py
@@ -122,140 +124,148 @@ checkout::shipping::free-above: above the threshold shipping is free: conformanc
 $ conjecture sign --user alice --confirmed conjecture/phenomena/checkout/shipping.cjtr
 ```
 
-Write the rule once, point it at real code, get a real verdict - and a
-signed, attributable record that a human looked at it.
+Escreva a regra uma vez, aponte pro código real, receba um veredito real -
+e um registro assinado e atribuível de que um humano olhou pra isso.
 
-## Quick start
+## Começo rápido
 
 > [!NOTE]
-> There's no pre-built download yet - you build the one binary yourself.
-> It's one command, and it's the same command on every OS.
+> Ainda não existe um download pronto - você mesmo compila o único
+> binário. É um comando só, e é o mesmo comando em qualquer sistema.
 
-This repo has exactly one CGO dependency
-(`github.com/smacker/go-tree-sitter`, used for dependency analysis), so the
-binary needs a real C compiler for whatever OS you build it for:
+Este repositório tem exatamente uma dependência CGO
+(`github.com/smacker/go-tree-sitter`, usada pra análise de dependências),
+então o binário precisa de um compilador C real pra qualquer sistema em
+que for compilado:
 
 ```bash
 CGO_ENABLED=1 go build -o conjecture ./cmd/conjecture
 ```
 
-- **Linux/macOS**: works directly if `gcc`/`clang` is installed.
-- **Windows**: there is no native gcc. Build it inside WSL2 (install
-  `golang-go` and `gcc` there), or inside a `golang` container via
+- **Linux/macOS**: funciona direto se `gcc`/`clang` estiver instalado.
+- **Windows**: não existe gcc nativo. Compile dentro do WSL2 (instale
+  `golang-go` e `gcc` lá), ou dentro de um container `golang` via
   Podman/Docker:
   ```bash
   podman run --rm -v "$(pwd):/src" -w /src golang:1.25 \
     go build -o conjecture ./cmd/conjecture
   ```
 
-You also need **a container runtime on `PATH` named `docker`** -
-`conjecture check`/`implement`/`work` run the implementation under test
-inside a container with `--network none`. Real Docker works as-is; real
-Podman works behind a one-line shim (`docker` isn't aliased to it by
-default):
+Você também precisa de **um runtime de container no `PATH` chamado
+`docker`** - `conjecture check`/`implement`/`work` executam a implementação
+testada dentro de um container com `--network none`. Docker real funciona
+direto; Podman real funciona por trás de um shim de uma linha (`docker`
+não vem apontado pra ele por padrão):
 
 ```bash
 printf '#!/bin/sh\nexec podman "$@"\n' | sudo tee /usr/local/bin/docker
 sudo chmod +x /usr/local/bin/docker
 ```
 
-Then:
+Depois:
 
 ```bash
-conjecture init   # creates conjecture/phenomena/, conjecture/materializations/, .conjecture/
+conjecture init   # cria conjecture/phenomena/, conjecture/materializations/, .conjecture/
 ```
 
-Write a rule, run `conjecture check` against your real code - that's the
-whole worked example above, start to finish.
+Escreva uma regra, rode `conjecture check` contra seu código real - esse é
+todo o exemplo prático acima, do início ao fim.
 
 > [!NOTE]
-> `conjecture check`/`verify`/`sign`/`promote`/`context` need no LLM at all
-> - they only run already-written rules against already-written code.
-> Only `draft`/`implement`/`work`/`attack`/`swarm` need one, and switching
-> providers is just a `--provider` flag plus that provider's own API key -
-> no code change, ever. Set one of: `ANTHROPIC_API_KEY` (provider
-> `anthropic`, the default), `DEEPSEEK_API_KEY` (provider `deepseek`), a
-> local `ollama serve`/`llama-server` (provider `llamacpp`, no key needed),
-> or any provider speaking OpenAI's own Chat Completions format - verified
-> against nine: `openai`, `gemini`, `grok`, `llama-api` (Meta's hosted API,
-> distinct from local `llamacpp`), `mistral`, `cohere`, `bedrock`,
-> `azure-openai`, `dashscope` (serves Qwen) - each just its own env vars,
-> listed in [`internal/llmclient/openaicompatible.go`](internal/llmclient/openaicompatible.go).
+> `conjecture check`/`verify`/`sign`/`promote`/`context` não precisam de
+> LLM nenhum - eles só executam regras já escritas contra código já
+> escrito. Só `draft`/`implement`/`work`/`attack`/`swarm` precisam de um, e
+> trocar de provedor é só uma flag `--provider` mais a API key daquele
+> provedor - nunca muda código. Configure um destes: `ANTHROPIC_API_KEY`
+> (provedor `anthropic`, o padrão), `DEEPSEEK_API_KEY` (provedor
+> `deepseek`), um `ollama serve`/`llama-server` local (provedor
+> `llamacpp`, sem key necessária), ou qualquer provedor que fale o formato
+> Chat Completions da OpenAI - verificado contra nove: `openai`, `gemini`,
+> `grok`, `llama-api` (API hospedada da Meta, diferente do `llamacpp`
+> local), `mistral`, `cohere`, `bedrock`, `azure-openai`, `dashscope`
+> (serve Qwen) - cada um só com suas próprias env vars, listadas em
+> [`internal/llmclient/openaicompatible.go`](internal/llmclient/openaicompatible.go).
 
-## Commands
+## Comandos
 
-| Command | Does |
+| Comando | Faz |
 |---|---|
-| `init` | Creates the repo layout (`conjecture/phenomena/`, `conjecture/materializations/`, gitignored `.conjecture/`). |
-| `draft` | Asks an LLM to draft a `.cjtr` spec from a plain-language request. |
-| `sign` | Records authorship/confirmation on a `.cjtr` file; `--confirmed` also records a real decision-ledger entry. |
-| `verify` | Checks a spec's own worked examples against its own hypotheses - no sandbox, no implementation. |
-| `check` | Runs a hypothesis's directed-sampling conformance cycle against a real sandboxed implementation. |
-| `implement` / `work` | Asks an LLM to write/fix implementation code until it conforms (or the round budget runs out); `work` pulls from the queue instead of taking a file directly. |
-| `attack` / `swarm` | Runs one or several adversarial-LLM attacks against a hypothesis, looking for a counterexample. |
-| `promote` | Promotes a hypothesis/law to Theory or Law once its real evidence conditions hold; records a decision-ledger entry. |
-| `law` | Resolves a conflict between a user-defined law and a formal proof or another law. |
-| `context` | `list`/`resume`/`open`/`origin`/`diff`/`restore`/`resolve-conflict` over a saved verification context. |
-| `base` | Attaches/searches a knowledge base (norms, definitions, references) scoped to a project or area. |
-| `queue` | The three-tier (blocker/current-task/background) work queue `work` consumes; `review` lists items it couldn't act on automatically. |
-| `results` | Imports a target system's own already-produced JUnit XML or TAP results. |
-| `graph` | Reads/sets a context-engine node's weight/relevance/confidence. |
-| `optimize` | Applies a calibration proposal - always requires explicit `--approved`. |
-| `settings` | Checks a value against a team-configured floor (never a ceiling). |
-| `translate` | Generates a hypothesis's deterministic `# pt:` comment. |
-| `deps` | Checks Go source for forbidden imports. |
-| `watch` | Polls a directory and re-verifies any `.cjtr` file that changed. |
-| `mcp` | Runs conjecture as an MCP server. |
+| `init` | Cria a estrutura do repositório (`conjecture/phenomena/`, `conjecture/materializations/`, `.conjecture/` no gitignore). |
+| `draft` | Pede a um LLM pra rascunhar um spec `.cjtr` a partir de um pedido em linguagem natural. |
+| `sign` | Registra autoria/confirmação num arquivo `.cjtr`; `--confirmed` também registra uma entrada real no ledger de decisões. |
+| `verify` | Checa os exemplos próprios de um spec contra suas próprias hipóteses - sem sandbox, sem implementação. |
+| `check` | Executa o ciclo de conformidade por amostragem direcionada de uma hipótese contra uma implementação real em sandbox. |
+| `implement` / `work` | Pede a um LLM pra escrever/corrigir código de implementação até ficar conforme (ou o orçamento de rodadas acabar); `work` consome da fila em vez de receber um arquivo direto. |
+| `attack` / `swarm` | Executa um ou vários ataques adversariais de LLM contra uma hipótese, procurando um contraexemplo. |
+| `promote` | Promove uma hipótese/law pra Theory ou Law quando suas condições reais de evidência se cumprem; registra uma entrada no ledger de decisões. |
+| `law` | Resolve um conflito entre uma law definida pelo usuário e uma prova formal ou outra law. |
+| `context` | `list`/`resume`/`open`/`origin`/`diff`/`restore`/`resolve-conflict` sobre um contexto de verificação salvo. |
+| `base` | Conecta/busca uma base de conhecimento (normas, definições, referências) com escopo de projeto ou área. |
+| `queue` | A fila de trabalho de três níveis (blocker/current-task/background) que `work` consome; `review` lista itens que não puderam ser tratados automaticamente. |
+| `results` | Importa resultados já produzidos em JUnit XML ou TAP de um sistema alvo. |
+| `graph` | Lê/define peso/relevância/confiança de um nó do motor de contexto. |
+| `optimize` | Aplica uma proposta de calibração - sempre exige `--approved` explícito. |
+| `settings` | Checa um valor contra um piso configurado pelo time (nunca um teto). |
+| `translate` | Gera o comentário determinístico `# pt:` de uma hipótese. |
+| `deps` | Checa código Go por imports proibidos. |
+| `watch` | Monitora um diretório e reverifica qualquer arquivo `.cjtr` que mudar. |
+| `mcp` | Executa o conjecture como um servidor MCP. |
 
-Run any command with no arguments (or `--help`-shaped nonsense) to see its
-own real usage string.
+Rode qualquer comando sem argumentos (ou qualquer bobagem no formato
+`--help`) pra ver sua própria string de uso real.
 
-## What this is *not* for
+## Pra que isso *não* serve
 
-- **Not a general test framework.** It only checks whether a running
-  implementation matches a rule you've written in `.cjtr`'s own narrow
-  grammar (comparisons over decimals/categories, `given`/`then`/
-  `otherwise`/`always`). It can't express arbitrary logic, and it won't
-  replace your unit tests for anything that isn't shaped like a declared
-  business rule.
-- **Not exhaustive proof, by default.** `check`'s directed-sampling mode
-  tries boundary and partition values, not every possible input. Only a
-  hypothesis over a fully bounded, enumerable domain gets this codebase's
-  own "complete proof" rigor level - most checks are strong evidence, not
-  a mathematical guarantee for every possible input.
-- **Not a GUI or UI testing tool yet.** There's a real accessibility-driver
-  backend for Windows and Linux, but nothing in the `.cjtr` grammar can
-  target a GUI - it's unreachable from the actual CLI workflow today.
-- **Not a sandboxing/security product.** The sandbox blocks outbound
-  network access and nothing else - no filesystem or resource hardening.
-  Don't point it at code you don't already trust to run on your machine.
-- **Not a static analyzer for a whole codebase.** `deps check` is a narrow
-  forbidden-import checker for one Go file at a time, not a linter.
-- **Not something with a production track record.** This is an
-  experimental project, built mostly in one extended session. Nobody has
-  used it yet to make a real decision about real code they depend on -
-  that's the next real test, not something already behind it.
+- **Não é um framework de testes genérico.** Ele só checa se uma
+  implementação em execução corresponde a uma regra que você escreveu na
+  gramática restrita do `.cjtr` (comparações sobre decimais/categorias,
+  `given`/`then`/`otherwise`/`always`). Não consegue expressar lógica
+  arbitrária, e não vai substituir seus testes unitários pra nada que não
+  tenha o formato de uma regra de negócio declarada.
+- **Não é prova exaustiva, por padrão.** O modo de amostragem direcionada
+  do `check` tenta valores de fronteira e partição, não cada entrada
+  possível. Só uma hipótese sobre um domínio totalmente delimitado e
+  enumerável recebe o nível de rigor de "prova completa" deste código - a
+  maioria dos checks é evidência forte, não uma garantia matemática pra
+  toda entrada possível.
+- **Ainda não é uma ferramenta de teste de GUI/UI.** Existe um backend
+  real de acessibilidade pra Windows e Linux, mas nada na gramática
+  `.cjtr` consegue apontar pra uma GUI - é inalcançável a partir do fluxo
+  real da CLI hoje.
+- **Não é um produto de sandboxing/segurança.** A sandbox bloqueia acesso
+  de rede de saída e nada mais - sem hardening de filesystem ou de
+  recursos. Não aponte pra código em que você já não confia pra rodar na
+  sua máquina.
+- **Não é um analisador estático pra um codebase inteiro.** `deps check`
+  é um checker estreito de imports proibidos pra um arquivo Go por vez,
+  não um linter.
+- **Não tem histórico de produção ainda.** Este é um projeto experimental,
+  construído majoritariamente numa única sessão longa. Ninguém ainda usou
+  pra tomar uma decisão real sobre código real do qual dependa - esse é o
+  próximo teste real, não algo que já ficou atrás.
 
 ## Status
 
-The verification core (check → attack/swarm → promote, sandboxed execution,
-the decision ledger, context-composition's full command set) is implemented
-and has been run for real: against a real constraint solver (z3), a real
-local LLM (llama.cpp/Ollama), a real genuine third-party library
-(python-slugify - this actually found and fixed a real bug in this repo),
-and real network-isolation verification. Two things to know before relying
-on it:
+O núcleo de verificação (check → attack/swarm → promote, execução em
+sandbox, o ledger de decisões, o conjunto completo de comandos de
+composição de contexto) está implementado e já foi rodado de verdade:
+contra um solver de restrições real (z3), um LLM local real
+(llama.cpp/Ollama), uma biblioteca de terceiros genuína e real
+(python-slugify - isso achou e corrigiu um bug real neste repositório), e
+verificação real de isolamento de rede. Duas coisas pra saber antes de
+confiar nisso:
 
-- **The GUI-accessibility driver has real Windows (UI Automation) and Linux
-  (AT-SPI) backends, but the `.cjtr` grammar has no way to declare a GUI
-  target yet** - the capability exists and is tested on its own, but nothing
-  in the CLI's main verification flow can reach it. macOS is not supported
-  (no backend, by deliberate decision - see
+- **O driver de acessibilidade de GUI tem backends reais pra Windows (UI
+  Automation) e Linux (AT-SPI), mas a gramática `.cjtr` ainda não tem como
+  declarar um alvo de GUI** - a capacidade existe e é testada isoladamente,
+  mas nada no fluxo principal de verificação da CLI consegue alcançá-la.
+  macOS não é suportado (sem backend, por decisão deliberada - veja
   [issue #144](https://github.com/farlleyferreira/conjecture-ai/issues/144)).
-- **Materialization content generation** (a `conjecture/materializations/`
-  path exists after `conjecture init`, but nothing writes anything there
-  yet) is explicitly out of scope of the persistence work done so far.
+- **Geração de conteúdo de materialização** (um caminho
+  `conjecture/materializations/` existe depois do `conjecture init`, mas
+  nada escreve nada lá ainda) está explicitamente fora do escopo do
+  trabalho de persistência feito até agora.
 
-## License
+## Licença
 
-This project is licensed under the [MIT License](LICENSE).
+Este projeto é licenciado sob a [Licença MIT](LICENSE).
