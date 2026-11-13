@@ -38,35 +38,72 @@ func TestRepoID_DistinctPathsDiffer(t *testing.T) {
 	}
 }
 
-func TestLocalDataDir_Linux(t *testing.T) {
+func TestLocalDataDir_LinuxUsesXDGDataHome(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "/home/alice/.data")
+	t.Setenv("HOME", "/home/alice")
 	dir, err := localDataDir("/some/repo", "linux")
 	if err != nil {
 		t.Fatalf("localDataDir returned unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(dir, "/var/lib/conjecture/") {
-		t.Errorf("localDataDir(..., \"linux\") = %q, want a prefix of /var/lib/conjecture/", dir)
+	if !strings.HasPrefix(dir, "/home/alice/.data/conjecture/") {
+		t.Errorf("localDataDir(..., \"linux\") = %q, want a prefix of /home/alice/.data/conjecture/", dir)
+	}
+}
+
+func TestLocalDataDir_LinuxFallsBackToHomeLocalShare(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("HOME", "/home/alice")
+	dir, err := localDataDir("/some/repo", "linux")
+	if err != nil {
+		t.Fatalf("localDataDir returned unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(dir, "/home/alice/.local/share/conjecture/") {
+		t.Errorf("localDataDir(..., \"linux\") = %q, want a prefix of /home/alice/.local/share/conjecture/", dir)
+	}
+}
+
+func TestLocalDataDir_LinuxMissingHomeAndXDGIsError(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("HOME", "")
+	if _, err := localDataDir("/some/repo", "linux"); err == nil {
+		t.Fatal("localDataDir with no HOME and no XDG_DATA_HOME = nil error, want an error")
 	}
 }
 
 func TestLocalDataDir_Darwin(t *testing.T) {
+	t.Setenv("HOME", "/Users/alice")
 	dir, err := localDataDir("/some/repo", "darwin")
 	if err != nil {
 		t.Fatalf("localDataDir returned unexpected error: %v", err)
 	}
-	if !strings.HasPrefix(dir, "/Library/Application Support/conjecture/") {
-		t.Errorf("localDataDir(..., \"darwin\") = %q, want a prefix of /Library/Application Support/conjecture/", dir)
+	if !strings.HasPrefix(dir, "/Users/alice/Library/Application Support/conjecture/") {
+		t.Errorf("localDataDir(..., \"darwin\") = %q, want a prefix of /Users/alice/Library/Application Support/conjecture/", dir)
+	}
+}
+
+func TestLocalDataDir_DarwinMissingHomeIsError(t *testing.T) {
+	t.Setenv("HOME", "")
+	if _, err := localDataDir("/some/repo", "darwin"); err == nil {
+		t.Fatal("localDataDir with no HOME = nil error, want an error")
 	}
 }
 
 func TestLocalDataDir_Windows(t *testing.T) {
-	t.Setenv("ProgramData", `C:\ProgramData`)
+	t.Setenv("LOCALAPPDATA", `C:\Users\alice\AppData\Local`)
 	dir, err := localDataDir(`C:\some\repo`, "windows")
 	if err != nil {
 		t.Fatalf("localDataDir returned unexpected error: %v", err)
 	}
-	want := `C:\ProgramData\conjecture\`
+	want := `C:\Users\alice\AppData\Local\conjecture\`
 	if !strings.HasPrefix(dir, want) {
 		t.Errorf("localDataDir(..., \"windows\") = %q, want a prefix of %q", dir, want)
+	}
+}
+
+func TestLocalDataDir_WindowsMissingLocalAppDataIsError(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", "")
+	if _, err := localDataDir(`C:\some\repo`, "windows"); err == nil {
+		t.Fatal("localDataDir with no LOCALAPPDATA = nil error, want an error")
 	}
 }
 

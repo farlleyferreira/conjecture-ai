@@ -50,9 +50,13 @@ append-only tables, each record chained by hash to the previous one.
 
 ### Requirement: Per-OS local data directory
 The local data directory SHALL be read-only to the implementing agent and
-located per operating system: `/var/lib/conjecture/<repo-id>/` on Linux,
-`/Library/Application Support/conjecture/<repo-id>/` on macOS, and
-`%ProgramData%\conjecture\<repo-id>\` on Windows.
+located, per-user, per operating system: `$XDG_DATA_HOME/conjecture/<repo-id>/`
+(falling back to `$HOME/.local/share/conjecture/<repo-id>/` when
+`XDG_DATA_HOME` is unset) on Linux, `$HOME/Library/Application
+Support/conjecture/<repo-id>/` on macOS, and
+`%LOCALAPPDATA%\conjecture\<repo-id>\` on Windows - each the standard
+per-user application-data location for its platform, writable by the
+account conjecture actually runs as without administrator privileges.
 
 #### Scenario: Agent cannot write to the local data directory
 - **WHEN** an implementing or drafting LLM session attempts to write
