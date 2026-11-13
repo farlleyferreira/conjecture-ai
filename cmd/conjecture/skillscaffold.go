@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	_ "embed"
 	"fmt"
 	"os"
@@ -23,37 +24,124 @@ var conjectureWorkflowSkill []byte
 // integration's own "Onboarding skill scaffold" requirement.
 const skillRelPath = ".claude/skills/conjecture-workflow/SKILL.md"
 
-// ensureWorkflowSkill writes the bundled orchestration skill
-// (templates/conjecture-workflow-skill.md, embedded at build time)
-// into repoRoot, idempotently: an already-present file is left alone,
-// never overwritten, so a user's own edits to it are never clobbered
-// by a later "conjecture init" re-run - the same "existing directories
-// are left alone" posture [persistence.EnsureWorkingLayout] already
-// takes for its own idempotent writes.
+// skillChecksumRelPath records, in the repository's own local working
+// directory (never git-tracked - persistence's own "Everything else
+// stays local-only"), the SHA-256 of the exact bytes
+// [ensureWorkflowSkill] itself last wrote to skillRelPath. Its only
+// purpose is answering one question on a later "conjecture init" run:
+// "is the file on disk still exactly what we wrote, or has the user
+// edited it since?" - see [ensureWorkflowSkill]'s own doc comment for
+// what each answer does.
+const skillChecksumRelPath = ".conjecture/skill-checksum"
+
+// SkillScaffoldAction reports what [ensureWorkflowSkill] actually did,
+// so "conjecture init" can tell the user the true story instead of
+// one fixed message regardless of outcome.
+type SkillScaffoldAction int
+
+const (
+	SkillCreated SkillScaffoldAction = iota
+	SkillUpToDate
+	SkillUpdated
+	SkillLeftCustomized
+)
+
+func (a SkillScaffoldAction) String() string {
+	switch a {
+	case SkillCreated:
+		return "created"
+	case SkillUpToDate:
+		return "already up to date"
+	case SkillUpdated:
+		return "updated to the newer bundled version"
+	case SkillLeftCustomized:
+		return "left as-is (edited since conjecture last wrote it)"
+	default:
+		return "unknown"
+	}
+}
+
+// ensureWorkflowSkill writes or updates the bundled orchestration
+// skill (templates/conjecture-workflow-skill.md, embedded at build
+// time, rendered via [renderWorkflowSkill]) at repoRoot.
 //
-// What the skill itself teaches (draft -> verify -> human-signs ->
-// implement -> check, never confirming a specification on the user's
-// own behalf) lives entirely in that one file, not duplicated here -
-// this function only ever places it, after substituting in the
-// grammar reference it shares with draft.go's own draftSystemPrompt
-// (see that variable's own doc comment for why) - the one place the
-// two ever actually differ in their raw template source.
-func ensureWorkflowSkill(repoRoot string) error {
+// A file that does not exist yet is created (SkillCreated). A file
+// that exists is only ever overwritten when it is still exactly the
+// bytes this function itself last wrote there, verified via the
+// SHA-256 recorded at skillChecksumRelPath the previous time this ran
+// (SkillUpdated when the newly rendered content actually differs,
+// SkillUpToDate when it is already identical) - never when the
+// recorded checksum is missing or does not match what is on disk
+// (SkillLeftCustomized), since either means a human may have edited
+// the file since, and clobbering that edit would defeat the entire
+// point of idempotence [persistence.EnsureWorkingLayout] already
+// established for the rest of this command's own layout. A repository
+// scaffolded before this checksum tracking existed has no recorded
+// checksum at all, so its first "conjecture init" under this version
+// also reports SkillLeftCustomized - conservatively correct (this
+// function genuinely cannot tell whether that file was ever edited),
+// not a false claim either way.
+func ensureWorkflowSkill(repoRoot string) (SkillScaffoldAction, error) {
 	path := filepath.Join(repoRoot, filepath.FromSlash(skillRelPath))
-	if _, err := os.Stat(path); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("conjecture: checking %s: %w", path, err)
+	checksumPath := filepath.Join(repoRoot, filepath.FromSlash(skillChecksumRelPath))
+	rendered := renderWorkflowSkill()
+	renderedSum := sha256Hex(rendered)
+
+	existing, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return 0, fmt.Errorf("conjecture: creating %s: %w", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, rendered, 0o644); err != nil {
+			return 0, fmt.Errorf("conjecture: writing %s: %w", path, err)
+		}
+		if err := writeSkillChecksum(checksumPath, renderedSum); err != nil {
+			return 0, err
+		}
+		return SkillCreated, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("conjecture: reading %s: %w", path, err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	storedSum, readErr := os.ReadFile(checksumPath)
+	existingSum := sha256Hex(existing)
+	if readErr != nil || strings.TrimSpace(string(storedSum)) != existingSum {
+		// Missing, unreadable, or stale checksum - this file may have
+		// been edited by a human since it was last written; never
+		// overwrite on anything less than certainty that it was not.
+		return SkillLeftCustomized, nil
+	}
+
+	if existingSum == renderedSum {
+		return SkillUpToDate, nil
+	}
+	if err := os.WriteFile(path, rendered, 0o644); err != nil {
+		return 0, fmt.Errorf("conjecture: writing %s: %w", path, err)
+	}
+	if err := writeSkillChecksum(checksumPath, renderedSum); err != nil {
+		return 0, err
+	}
+	return SkillUpdated, nil
+}
+
+// writeSkillChecksum records sum at path, creating its own parent
+// directory (".conjecture/", already created 0o700 by
+// [persistence.EnsureWorkingLayout] in the real "conjecture init"
+// path; created here too in case a caller - a test, say - calls
+// [ensureWorkflowSkill] on its own without that having already run).
+func writeSkillChecksum(path, sum string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("conjecture: creating %s: %w", filepath.Dir(path), err)
 	}
-	content := renderWorkflowSkill()
-	if err := os.WriteFile(path, content, 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(sum), 0o600); err != nil {
 		return fmt.Errorf("conjecture: writing %s: %w", path, err)
 	}
 	return nil
+}
+
+func sha256Hex(data []byte) string {
+	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
 // renderWorkflowSkill substitutes the shared grammar reference
