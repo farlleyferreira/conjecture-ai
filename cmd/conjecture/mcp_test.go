@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/farlleyferreira/conjecture-ai/internal/contextcomposition"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -15,7 +16,11 @@ import (
 // returned db is the server's own "read_evidence" store - a fresh
 // temporary one (openCheckTestStore), never the real per-OS one
 // [persistence.OpenStore] would otherwise open - so a test can seed it
-// directly with [evidenceledger.Append].
+// directly with [evidenceledger.Append]. contextcomposition's own
+// schema is ensured here too, since openCheckTestStore does not: the
+// real "conjecture mcp" (runMCP) ensures it before ever building the
+// server, for the context_* tools (mcp_read_tools.go) this test
+// harness also exercises.
 func connectMCPTestClient(t *testing.T) (*mcp.ClientSession, *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
@@ -23,6 +28,9 @@ func connectMCPTestClient(t *testing.T) (*mcp.ClientSession, *sql.DB) {
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 
 	db := openCheckTestStore(t)
+	if err := contextcomposition.EnsureSchema(db); err != nil {
+		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
+	}
 	server := newMCPServer(db)
 	if _, err := server.Connect(ctx, serverTransport, nil); err != nil {
 		t.Fatalf("server.Connect returned unexpected error: %v", err)
