@@ -99,6 +99,48 @@ func TestMCPServer_VerifyToolIsRegistered(t *testing.T) {
 	t.Errorf("ListTools = %+v, want a \"verify\" tool", res.Tools)
 }
 
+func TestMCPServer_CheckToolIsRegistered(t *testing.T) {
+	session, _ := connectMCPTestClient(t)
+
+	res, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools returned unexpected error: %v", err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name == "check" {
+			return
+		}
+	}
+	t.Errorf("ListTools = %+v, want a \"check\" tool", res.Tools)
+}
+
+func TestMCPCheckTool_MissingFileReportsFailure(t *testing.T) {
+	session, _ := connectMCPTestClient(t)
+
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "check",
+		Arguments: map[string]any{
+			"path":    "this-file-does-not-exist.cjtr",
+			"image":   "irrelevant:latest",
+			"command": []string{"irrelevant"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
+	}
+
+	out, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want map[string]any: %+v", res.StructuredContent, res.StructuredContent)
+	}
+	if passed, _ := out["passed"].(bool); passed {
+		t.Error("checkOutput.Passed = true for a missing file, want false")
+	}
+	if report, _ := out["report"].(string); report == "" {
+		t.Error("checkOutput.Report is empty, want it to explain the failure")
+	}
+}
+
 func TestMCPServer_ReadEvidenceToolIsRegistered(t *testing.T) {
 	session, _ := connectMCPTestClient(t)
 
