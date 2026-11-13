@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -270,6 +271,48 @@ func TestMCPQueueListTool_GroupsByPhenomenonAndDrillsDown(t *testing.T) {
 	resultItems, ok := out["items"].([]any)
 	if !ok || len(resultItems) != 2 {
 		t.Fatalf("items = %+v, want exactly 2 (demo-area::checkout's own two)", out["items"])
+	}
+}
+
+func TestMCPQueueListTool_DrillDownWarnsAboveThreeTimesAverage(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	session, _ := connectMCPTestClient(t)
+
+	queueDB, err := persistence.OpenStore(".")
+	if err != nil {
+		t.Fatalf("OpenStore returned unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = queueDB.Close() })
+	if err := workqueue.EnsureSchema(queueDB); err != nil {
+		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
+	}
+	now := time.Now().UTC()
+	seed := []workqueue.Item{
+		{ID: "demo-area::billing::rule::hyp", Tier: workqueue.Blocker, CreatedAt: now},
+		{ID: "demo-area::invoicing::rule::hyp", Tier: workqueue.Blocker, CreatedAt: now},
+	}
+	for i := 0; i < 4; i++ {
+		seed = append(seed, workqueue.Item{ID: fmt.Sprintf("demo-area::checkout::rule::hyp%d", i), Tier: workqueue.Blocker, CreatedAt: now})
+	}
+	for _, it := range seed {
+		if err := workqueue.Add(queueDB, it); err != nil {
+			t.Fatalf("workqueue.Add returned unexpected error: %v", err)
+		}
+	}
+
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "queue_list", Arguments: map[string]any{"area": "demo-area", "phenomenon": "checkout"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
+	}
+	out, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want map[string]any: %+v", res.StructuredContent, res.StructuredContent)
+	}
+	warning, _ := out["warning"].(string)
+	if warning == "" {
+		t.Error("warning is empty, want one (4 items vs. the other phenomena's own average of 1 is more than 3x)")
 	}
 }
 
