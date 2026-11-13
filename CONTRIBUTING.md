@@ -45,17 +45,20 @@ BREAKING CHANGE: Node 20+ is now required.
 Commit messages are validated locally via a `commit-msg` git hook
 ([commitlint](https://commitlint.js.org/)). In CI, only the **PR title** is
 validated (it becomes the squash commit on `main`, which is what
-semantic-release reads) — individual commits are not linted in CI, so
+release-please reads) — individual commits are not linted in CI, so
 automated tools (e.g. Dependabot) can still open PRs without their own
 commit messages being conventional.
 
 ## Versioning & releases
 
 This project uses [Semantic Versioning](https://semver.org/) and
-[semantic-release](https://semantic-release.gitbook.io/). Versions, Git tags,
-GitHub releases and `CHANGELOG.md` are generated automatically from commit
-history when a pull request is merged into `main` — never bump the version
-or edit `CHANGELOG.md` by hand.
+[release-please](https://github.com/googleapis/release-please). Every push to
+`main` updates (or opens) a standing "release PR" that accumulates the next
+version bump, `CHANGELOG.md` entry, and release notes from commit history -
+nothing is pushed to `main` directly. Merging that release PR (through the
+normal PR flow, same required checks as any other PR) is what actually cuts
+the Git tag and GitHub Release. Never bump the version or edit
+`CHANGELOG.md` by hand; never close a release PR without merging it.
 
 ## Pull requests
 
