@@ -1,33 +1,25 @@
 # conjecture-ai
 
-`conjecture` is a CLI that implements the `.cjtr` language: a way to write a
-business-rule **hypothesis** (a `given`/`then`/`otherwise` or `always`
-statement, with worked examples) and verify it for real against a running
-implementation - inside a network-isolated sandbox, not by inspecting source
-code. A hypothesis that survives enough rounds of checking and adversarial
-attack accumulates evidence and can be promoted (Hypothesis → Thesis →
-Theory → Law), with every human promotion/review decision recorded in a
-local, hash-chained ledger.
+## What is this?
 
-## Status
+Say you have a business rule: *"orders over $100 ship free, unless it's a
+subscription order."* Normally, the only way to know whether your code
+actually does that is to read the code, or write a unit test by hand and
+hope you covered the right cases.
 
-The verification core (check → attack/swarm → promote, sandboxed execution,
-the decision ledger, context-composition's full command set) is implemented
-and has been run for real: against a real constraint solver (z3), a real
-local LLM (llama.cpp/Ollama), a real genuine third-party library
-(python-slugify - this actually found and fixed a real bug in this repo),
-and real network-isolation verification. Two things to know before relying
-on it:
+`conjecture` flips that around: you write the rule itself, once, in a small
+structured file (no code) - and `conjecture` generates test cases from it,
+runs your *real* implementation inside a sandboxed container, and tells you
+**conformant** or **non-conformant**, with the actual input that broke it if
+it didn't hold. It never trusts the code's own claims about itself - it
+always runs it for real and checks the real output.
 
-- **The GUI-accessibility driver has real Windows (UI Automation) and Linux
-  (AT-SPI) backends, but the `.cjtr` grammar has no way to declare a GUI
-  target yet** - the capability exists and is tested on its own, but nothing
-  in the CLI's main verification flow can reach it. macOS is not supported
-  (no backend, by deliberate decision - see
-  [issue #144](https://github.com/farlleyferreira/conjecture-ai/issues/144)).
-- **Materialization content generation** (a `conjecture/materializations/`
-  path exists after `conjecture init`, but nothing writes anything there
-  yet) is explicitly out of scope of the persistence work done so far.
+On top of that one core loop, it can also: ask an LLM to draft the rule or
+write/fix the implementation for you, run adversarial LLM "attacks" that try
+to find a case where the rule breaks, and promote a rule through a maturity
+ladder (Hypothesis → Thesis → Theory → Law) as more evidence accumulates -
+with every human decision along the way recorded in a local, tamper-evident
+ledger, not just printed and forgotten.
 
 ## Build
 
@@ -70,55 +62,53 @@ CGO_ENABLED=1 go build -o conjecture ./cmd/conjecture
   `conjecture check`/`verify`/`sign`/`promote`/`context` need none of this -
   they only run already-written specs against already-written code.
 
-## Quick start
+## A worked example
 
 ```bash
-conjecture init                       # creates conjecture/phenomena/,
-                                       # conjecture/materializations/, and
-                                       # the local .conjecture/ (gitignored)
+conjecture init   # conjecture/phenomena/, conjecture/materializations/, .conjecture/
 ```
 
-Write a hypothesis at `conjecture/phenomena/shipping/checkout.cjtr`:
+Write the rule at `conjecture/phenomena/checkout/shipping.cjtr`:
 
 ```yaml
 conjecture: 1.0.0
 
-phenomenon: checkout
+phenomenon: shipping
 
 concepts:
-  order type:
-    variable: input.order_type
-    one_of: [regular, subscription]
-  shipping fee:
-    variable: output.shipping_fee
-    type: decimal
+  discounted subtotal: {variable: input.discounted_subtotal, type: decimal}
+  order type: {variable: input.order_type, one_of: [regular, subscription]}
+  shipping fee: {variable: output.shipping_fee, type: decimal}
+  free shipping threshold: {value: 100.00}
 
 rules:
-  shipping fee rule:
-    id: shipping-rule
+  shipping is free above the threshold:
+    id: free-above
     hypotheses:
-      fee matches:
-        id: fee-matches
-        always: the shipping fee is 7.50
+      above the threshold shipping is free:
+        id: above-threshold
+        given:
+          - the discounted subtotal is greater than the free shipping threshold
+          - the order type is not subscription
+        then: the shipping fee is 0.00
+        otherwise: the shipping fee is at least 5.00
         examples:
-          - {order type: regular, shipping fee: 7.50}
+          - {discounted subtotal: 150.00, order type: regular, shipping fee: 0.00}
+          - {discounted subtotal: 50.00, order type: regular, shipping fee: 7.50}
+          - {discounted subtotal: 150.00, order type: subscription, shipping fee: 7.50}
 ```
 
-The implementation under test is any container image + command that reads a
-flat JSON object from `conjecture_input.json` (keys like `input.order_type`)
-in its working directory and writes `conjecture_output.json` (keys like
-`output.shipping_fee`) before exiting 0 - this project's own invented
-convention, documented in `internal/conformancecycle/harness.go`. A minimal
-Python adapter:
+The "implementation" is any container image + command that reads
+`conjecture_input.json` (flat JSON, keys like `input.order_type`) and writes
+`conjecture_output.json` the same way. Here's a real one - with a real bug,
+flat $7.50 no matter what:
 
 ```python
+# adapter.py
 import json
 data = json.load(open("conjecture_input.json"))
 json.dump({"output.shipping_fee": "7.50"}, open("conjecture_output.json", "w"))
 ```
-
-Bake it into an image at an absolute path (the mounted workspace is a fresh
-temp directory per run, not the image's own filesystem):
 
 ```dockerfile
 FROM python:3-slim
@@ -126,11 +116,88 @@ WORKDIR /work
 COPY adapter.py /work/adapter.py
 ```
 
-```bash
-podman build -t my-image:latest .
-conjecture check conjecture/phenomena/shipping/checkout.cjtr my-image:latest python3 /work/adapter.py
-conjecture sign --user alice --confirmed conjecture/phenomena/shipping/checkout.cjtr
 ```
+$ podman build -t shipping-demo:latest .
+$ conjecture check conjecture/phenomena/checkout/shipping.cjtr shipping-demo:latest python3 /work/adapter.py
+checkout::shipping::free-above: above the threshold shipping is free: judge: accepted
+checkout::shipping::free-above: above the threshold shipping is free: conformance (directed sampling): non-conformant
+checkout::shipping::free-above: above the threshold shipping is free:   counterexample: map[input.discounted_subtotal:150.00 input.order_type:regular output.shipping_fee:0.00]
+```
+
+Caught for real - a $150 regular order should ship free, and this
+implementation never does. Fix the bug for real:
+
+```python
+# adapter.py
+import json
+from decimal import Decimal
+
+data = json.load(open("conjecture_input.json"))
+subtotal = Decimal(data["input.discounted_subtotal"])
+order_type = data["input.order_type"]
+
+fee = Decimal("0.00") if subtotal > Decimal("100.00") and order_type != "subscription" else Decimal("7.50")
+json.dump({"output.shipping_fee": str(fee)}, open("conjecture_output.json", "w"))
+```
+
+```
+$ podman build -t shipping-demo:latest .
+$ conjecture check conjecture/phenomena/checkout/shipping.cjtr shipping-demo:latest python3 /work/adapter.py
+checkout::shipping::free-above: above the threshold shipping is free: judge: accepted
+checkout::shipping::free-above: above the threshold shipping is free: conformance (directed sampling): conformant
+
+$ conjecture sign --user alice --confirmed conjecture/phenomena/checkout/shipping.cjtr
+```
+
+That's the whole core loop: write the rule once, point it at real code,
+get a real verdict - and a signed, attributable record that a human looked
+at it.
+
+## What this is *not* for
+
+- **Not a general test framework.** It only checks whether a running
+  implementation matches a rule you've written in `.cjtr`'s own narrow
+  grammar (comparisons over decimals/categories, `given`/`then`/
+  `otherwise`/`always`). It can't express arbitrary logic, and it won't
+  replace your unit tests for anything that isn't shaped like a declared
+  business rule.
+- **Not exhaustive proof, by default.** `check`'s directed-sampling mode
+  tries boundary and partition values, not every possible input. Only a
+  hypothesis over a fully bounded, enumerable domain gets this codebase's
+  own "complete proof" rigor level - most checks are strong evidence, not
+  a mathematical guarantee for every possible input.
+- **Not a GUI or UI testing tool yet.** There's a real accessibility-driver
+  backend for Windows and Linux, but nothing in the `.cjtr` grammar can
+  target a GUI - it's unreachable from the actual CLI workflow today.
+- **Not a sandboxing/security product.** The sandbox blocks outbound
+  network access and nothing else - no filesystem or resource hardening.
+  Don't point it at code you don't already trust to run on your machine.
+- **Not a static analyzer for a whole codebase.** `deps check` is a narrow
+  forbidden-import checker for one Go file at a time, not a linter.
+- **Not something with a production track record.** This is an
+  experimental project, built mostly in one extended session. Nobody has
+  used it yet to make a real decision about real code they depend on -
+  that's the next real test, not something already behind it.
+
+## Status
+
+The verification core (check → attack/swarm → promote, sandboxed execution,
+the decision ledger, context-composition's full command set) is implemented
+and has been run for real: against a real constraint solver (z3), a real
+local LLM (llama.cpp/Ollama), a real genuine third-party library
+(python-slugify - this actually found and fixed a real bug in this repo),
+and real network-isolation verification. Two things to know before relying
+on it:
+
+- **The GUI-accessibility driver has real Windows (UI Automation) and Linux
+  (AT-SPI) backends, but the `.cjtr` grammar has no way to declare a GUI
+  target yet** - the capability exists and is tested on its own, but nothing
+  in the CLI's main verification flow can reach it. macOS is not supported
+  (no backend, by deliberate decision - see
+  [issue #144](https://github.com/farlleyferreira/conjecture-ai/issues/144)).
+- **Materialization content generation** (a `conjecture/materializations/`
+  path exists after `conjecture init`, but nothing writes anything there
+  yet) is explicitly out of scope of the persistence work done so far.
 
 ## Commands
 
