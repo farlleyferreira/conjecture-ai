@@ -24,38 +24,39 @@ what the code actually does.
 
 ## Say it once, in plain words
 
-Here's a real business rule: *"orders over $100 ship free, unless it's a
-subscription order."* Normally the only way to know whether your code
-actually does that is to read the code, or write a unit test by hand and
-hope you thought of the right cases.
+Here's a real airline policy: *"Economy Flex tickets changed at least 24
+hours before departure are free to change; anything else pays a change
+fee."* Normally the only way to know whether your code actually does that
+is to read the code, or write a unit test by hand and hope you thought of
+the right cases.
 
 ```yaml
-# conjecture/phenomena/checkout/shipping.cjtr
+# conjecture/phenomena/ticketing/ticket-change-fee.cjtr
 conjecture: 1.0.0
 
-phenomenon: shipping
+phenomenon: ticket-change-fee
 
 concepts:
-  discounted subtotal: {variable: input.discounted_subtotal, type: decimal}
-  order type: {variable: input.order_type, one_of: [regular, subscription]}
-  shipping fee: {variable: output.shipping_fee, type: decimal}
-  free shipping threshold: {value: 100.00}
+  hours before departure: {variable: input.hours_before_departure, type: decimal}
+  fare class: {variable: input.fare_class, one_of: [economy-basic, economy-flex]}
+  change fee: {variable: output.change_fee, type: decimal}
+  free change window: {value: 24.00}
 
 rules:
-  shipping is free above the threshold:
-    id: free-above
+  flex fares waive the fee inside the window:
+    id: flex-fee-waiver
     hypotheses:
-      above the threshold shipping is free:
-        id: above-threshold
+      flex fare inside window is free:
+        id: flex-inside-window
         given:
-          - the discounted subtotal is greater than the free shipping threshold
-          - the order type is not subscription
-        then: the shipping fee is 0.00
-        otherwise: the shipping fee is at least 5.00
+          - the fare class is economy-flex
+          - the hours before departure is at least the free change window
+        then: the change fee is 0.00
+        otherwise: the change fee is at least 75.00
         examples:
-          - {discounted subtotal: 150.00, order type: regular, shipping fee: 0.00}
-          - {discounted subtotal: 50.00, order type: regular, shipping fee: 7.50}
-          - {discounted subtotal: 150.00, order type: subscription, shipping fee: 7.50}
+          - {hours before departure: 30.00, fare class: economy-flex, change fee: 0.00}
+          - {hours before departure: 10.00, fare class: economy-flex, change fee: 150.00}
+          - {hours before departure: 30.00, fare class: economy-basic, change fee: 150.00}
 ```
 
 That's it. No code. Just the rule, in words a non-programmer could read
@@ -75,14 +76,16 @@ out loud.
 
 ## See it catch a real bug
 
-Here's an "implementation" with a real bug: it charges $7.50 shipping no
-matter what.
+Here's an "implementation" with a real bug: it forgets to check the fare
+class at all, and only looks at how many hours are left.
 
 ```python
 # adapter.py
 import json
 data = json.load(open("conjecture_input.json"))
-json.dump({"output.shipping_fee": "7.50"}, open("conjecture_output.json", "w"))
+hours = float(data["input.hours_before_departure"])
+fee = "0.00" if hours >= 24.00 else "150.00"
+json.dump({"output.change_fee": fee}, open("conjecture_output.json", "w"))
 ```
 
 ```dockerfile
@@ -92,36 +95,34 @@ COPY adapter.py /work/adapter.py
 ```
 
 ```
-$ podman build -t shipping-demo:latest .
-$ conjecture check conjecture/phenomena/checkout/shipping.cjtr shipping-demo:latest python3 /work/adapter.py
-checkout::shipping::free-above: above the threshold shipping is free: judge: accepted
-checkout::shipping::free-above: above the threshold shipping is free: conformance (directed sampling): non-conformant
-checkout::shipping::free-above: above the threshold shipping is free:   counterexample: map[input.discounted_subtotal:150.00 input.order_type:regular output.shipping_fee:0.00]
+$ podman build -t ticket-fee-demo:latest .
+$ conjecture check conjecture/phenomena/ticketing/ticket-change-fee.cjtr ticket-fee-demo:latest python3 /work/adapter.py
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: judge: accepted
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: conformance (directed sampling): non-conformant
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free:   counterexample: map[input.fare_class:economy-basic input.hours_before_departure:30.00 output.change_fee:0.00]
 ```
 
-Caught for real - a $150 regular order should ship free, and this
-implementation never does. Fix the bug for real:
+Caught for real - an Economy Basic ticket changed 30 hours out should
+still pay the fee, and this implementation waives it just because enough
+hours are left. Fix the bug for real:
 
 ```python
 # adapter.py
 import json
-from decimal import Decimal
-
 data = json.load(open("conjecture_input.json"))
-subtotal = Decimal(data["input.discounted_subtotal"])
-order_type = data["input.order_type"]
-
-fee = Decimal("0.00") if subtotal > Decimal("100.00") and order_type != "subscription" else Decimal("7.50")
-json.dump({"output.shipping_fee": str(fee)}, open("conjecture_output.json", "w"))
+hours = float(data["input.hours_before_departure"])
+fare_class = data["input.fare_class"]
+fee = "0.00" if (fare_class == "economy-flex" and hours >= 24.00) else "150.00"
+json.dump({"output.change_fee": fee}, open("conjecture_output.json", "w"))
 ```
 
 ```
-$ podman build -t shipping-demo:latest .
-$ conjecture check conjecture/phenomena/checkout/shipping.cjtr shipping-demo:latest python3 /work/adapter.py
-checkout::shipping::free-above: above the threshold shipping is free: judge: accepted
-checkout::shipping::free-above: above the threshold shipping is free: conformance (directed sampling): conformant
+$ podman build -t ticket-fee-demo:latest .
+$ conjecture check conjecture/phenomena/ticketing/ticket-change-fee.cjtr ticket-fee-demo:latest python3 /work/adapter.py
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: judge: accepted
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: conformance (directed sampling): conformant
 
-$ conjecture sign --user alice --confirmed conjecture/phenomena/checkout/shipping.cjtr
+$ conjecture sign --user alice --confirmed conjecture/phenomena/ticketing/ticket-change-fee.cjtr
 ```
 
 Write the rule once, point it at real code, get a real verdict - and a
