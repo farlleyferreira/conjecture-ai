@@ -37,16 +37,23 @@ const mcpUsage = "usage: conjecture mcp"
 // system SHALL maintain an explicit, documented table of actions an
 // LLM may perform... (for example, requesting verification, reading
 // evidence) versus actions it may not perform (for example, writing
-// evidence, confirming a specification, changing weights)." Both
-// named-allowed actions are built now ("verify" and "read_evidence");
-// the named-disallowed ones are enforced by omission - there is no
-// tool on this server that writes evidence, confirms a specification,
-// or changes a weight, not a runtime check that would reject such a
-// call. The folder-watch channel ("conjecture watch", watch.go) and
-// the rigor-reducing-action rule ("conjecture optimize calibrate"
-// marking a settings.cjtr file unconfirmed, see optimize.go) are both
-// wired elsewhere in this CLI now, not gaps this slice still leaves
-// open.
+// evidence, confirming a specification, changing weights)." "check"
+// is "requesting verification" too, the same category "verify"
+// already names, not a new permission: the evidence it records is the
+// system's own honest account of a real sandboxed run, not the LLM
+// asserting evidence directly - the disallowed "writing evidence"
+// means an action that injects or edits a ledger record outright,
+// which no tool on this server does. The named-disallowed actions
+// stay enforced by omission - there is still no tool here that writes
+// evidence directly, confirms a specification, or changes a weight,
+// not a runtime check that would reject such a call. Confirming a
+// specification ("conjecture sign --confirmed") and promoting it
+// stay CLI-only, deliberately: those are the human-only side of this
+// boundary, not gaps this slice leaves open. The folder-watch channel
+// ("conjecture watch", watch.go) and the rigor-reducing-action rule
+// ("conjecture optimize calibrate" marking a settings.cjtr file
+// unconfirmed, see optimize.go) are both wired elsewhere in this CLI
+// now, not gaps either.
 func runMCP(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
 		_, _ = fmt.Fprintln(stderr, mcpUsage)
@@ -95,6 +102,11 @@ func newMCPServer(db *sql.DB) *mcp.Server {
 		Description: "Read the recorded evidence-ledger history for a hypothesis or user-defined law by its composite id (area::phenomenon::rule::hypothesis, or area::phenomenon::hypothesis for a file-level law) - the other named-allowed action in the explicit permission table (\"reading evidence\"), alongside \"verify\". This only reads; it never writes evidence, confirms a specification, or changes a weight.",
 	}, readEvidenceToolFor(db))
 
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "check",
+		Description: "Run a hypothesis's or user-defined law's conformance cycle against a real sandboxed implementation - the same check \"conjecture check\" runs from the CLI, requesting verification and reading its result back through this channel. Requires a container runtime reachable from wherever this MCP server process runs, and an already-built image; never confirms a specification or changes a weight itself.",
+	}, checkTool)
+
 	return server
 }
 
@@ -122,6 +134,37 @@ func verifyTool(_ context.Context, _ *mcp.CallToolRequest, args verifyArgs) (*mc
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: report}},
 	}, verifyOutput{Passed: code == 0, Report: report}, nil
+}
+
+// checkArgs is "check"'s own tool input - [path, image, command...],
+// the same three-part shape "conjecture check" itself takes from the
+// CLI ([runCheck]'s own checkUsage), with command split into its own
+// field rather than left for the caller to flatten back into a single
+// arg slice.
+type checkArgs struct {
+	Path    string   `json:"path" jsonschema:"path to the .cjtr file to check"`
+	Image   string   `json:"image" jsonschema:"container image that runs the implementation under test"`
+	Command []string `json:"command" jsonschema:"command (and its arguments) to run inside the container"`
+}
+
+// checkOutput mirrors verifyOutput: whether every judged hypothesis
+// and law in the file came back accepted and conformant (exit code
+// 0), and the same textual report "conjecture check" prints to
+// stdout/stderr.
+type checkOutput struct {
+	Passed bool   `json:"passed"`
+	Report string `json:"report"`
+}
+
+func checkTool(_ context.Context, _ *mcp.CallToolRequest, args checkArgs) (*mcp.CallToolResult, checkOutput, error) {
+	var stdout, stderr bytes.Buffer
+	cliArgs := append([]string{args.Path, args.Image}, args.Command...)
+	code := runCheck(cliArgs, &stdout, &stderr)
+	report := stdout.String() + stderr.String()
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: report}},
+	}, checkOutput{Passed: code == 0, Report: report}, nil
 }
 
 // readEvidenceArgs is "read_evidence"'s own tool input: the
