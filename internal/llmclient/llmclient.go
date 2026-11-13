@@ -36,6 +36,14 @@ type Client interface {
 // Each provider reads its own configuration (its own API key, from its
 // own environment variable) when constructed; New itself never makes a
 // network call - a caller only pays for one inside Complete.
+//
+// "anthropic", "deepseek", and "llamacpp" each have their own
+// dedicated implementation (Anthropic's own wire format, and two
+// providers this package already proved out before the rest existed).
+// Every other provider below is a thin, researched preset of
+// [OpenAICompatibleClient] - see that type's own doc comment for which
+// nine providers were actually confirmed to speak that one shared wire
+// format, and why Anthropic could not simply be a tenth.
 func New(provider string) (Client, error) {
 	switch strings.ToLower(provider) {
 	case "anthropic":
@@ -44,6 +52,24 @@ func New(provider string) (Client, error) {
 		return newDeepSeekClient()
 	case "llamacpp":
 		return newLlamaCppClient()
+	case "openai":
+		return newOpenAIClient()
+	case "gemini":
+		return newGeminiClient()
+	case "grok":
+		return newGrokClient()
+	case "llama-api":
+		return newLlamaAPIClient()
+	case "mistral":
+		return newMistralClient()
+	case "cohere":
+		return newCohereClient()
+	case "bedrock":
+		return newBedrockClient()
+	case "azure-openai":
+		return newAzureOpenAIClient()
+	case "dashscope":
+		return newDashScopeClient()
 	default:
 		return nil, fmt.Errorf("llmclient: unrecognized provider %q", provider)
 	}
