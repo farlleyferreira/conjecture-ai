@@ -158,10 +158,13 @@ type queueListArgs struct {
 
 // queueListOutput is "queue_list"'s own structured result: exactly
 // one of Summaries or Items is populated, never both - see
-// [computeQueueList]'s own doc comment for which.
+// [computeQueueList]'s own doc comment for which. Warning is only
+// ever set alongside Items - see [computeQueueList]'s own doc comment
+// for when.
 type queueListOutput struct {
 	Summaries []PhenomenonQueueSummary `json:"summaries,omitempty"`
 	Items     []QueueItemOut           `json:"items,omitempty"`
+	Warning   string                   `json:"warning,omitempty"`
 }
 
 // queueListTool needs no db from [newMCPServer] - [workqueue.List]'s
@@ -186,13 +189,16 @@ func queueListTool(_ context.Context, _ *mcp.CallToolRequest, args queueListArgs
 		return nil, queueListOutput{}, err
 	}
 
-	summaries, queueItems, err := computeQueueList(items, args.Area, args.Phenomenon)
+	summaries, queueItems, warning, err := computeQueueList(items, args.Area, args.Phenomenon)
 	if err != nil {
 		return nil, queueListOutput{}, err
 	}
 
 	var report bytes.Buffer
 	if args.Area != "" && args.Phenomenon != "" {
+		if warning != "" {
+			fmt.Fprintf(&report, "WARNING: %s\n", warning)
+		}
 		if len(queueItems) == 0 {
 			fmt.Fprintf(&report, "%s::%s: queue is empty\n", args.Area, args.Phenomenon)
 		}
@@ -210,7 +216,7 @@ func queueListTool(_ context.Context, _ *mcp.CallToolRequest, args queueListArgs
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: report.String()}},
-	}, queueListOutput{Summaries: summaries, Items: queueItems}, nil
+	}, queueListOutput{Summaries: summaries, Items: queueItems, Warning: warning}, nil
 }
 
 // graphInspectArgs is "graph_inspect"'s own tool input - [node-id]

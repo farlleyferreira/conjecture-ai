@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -108,7 +109,7 @@ func TestQueueSummaries_MalformedIDGroupedUnderItself(t *testing.T) {
 }
 
 func TestComputeQueueList_PhenomenonWithoutAreaIsError(t *testing.T) {
-	if _, _, err := computeQueueList(nil, "", "checkout"); err == nil {
+	if _, _, _, err := computeQueueList(nil, "", "checkout"); err == nil {
 		t.Error("computeQueueList with phenomenon and no area = nil error, want one")
 	}
 }
@@ -119,7 +120,7 @@ func TestComputeQueueList_AreaAndPhenomenonDrillsToItems(t *testing.T) {
 		{ID: "demo-area::checkout::rule::hyp", Tier: workqueue.Blocker, Weight: 1, Severity: 1, CreatedAt: now},
 		{ID: "demo-area::billing::rule::hyp", Tier: workqueue.Blocker, Weight: 1, Severity: 1, CreatedAt: now},
 	}
-	summaries, queueItems, err := computeQueueList(items, "demo-area", "checkout")
+	summaries, queueItems, warning, err := computeQueueList(items, "demo-area", "checkout")
 	if err != nil {
 		t.Fatalf("computeQueueList returned unexpected error: %v", err)
 	}
@@ -128,6 +129,51 @@ func TestComputeQueueList_AreaAndPhenomenonDrillsToItems(t *testing.T) {
 	}
 	if len(queueItems) != 1 || queueItems[0].ID != "demo-area::checkout::rule::hyp" {
 		t.Errorf("queueItems = %+v, want exactly demo-area::checkout's own item", queueItems)
+	}
+	if warning != "" {
+		t.Errorf("warning = %q, want empty (1 item vs. 1 other phenomenon's own 1 item is not 3x)", warning)
+	}
+}
+
+func TestComputeQueueList_WarnsWhenFarAboveTheProjectsOwnAverage(t *testing.T) {
+	now := time.Now().UTC()
+	var items []workqueue.Item
+	// Two "other" phenomena averaging 1 item each; "checkout" has 4 -
+	// more than 3x that average (3).
+	items = append(items, workqueue.Item{ID: "demo-area::billing::rule::hyp", Tier: workqueue.Blocker, CreatedAt: now})
+	items = append(items, workqueue.Item{ID: "demo-area::invoicing::rule::hyp", Tier: workqueue.Blocker, CreatedAt: now})
+	for i := 0; i < 4; i++ {
+		items = append(items, workqueue.Item{ID: fmt.Sprintf("demo-area::checkout::rule::hyp%d", i), Tier: workqueue.Blocker, CreatedAt: now})
+	}
+
+	_, queueItems, warning, err := computeQueueList(items, "demo-area", "checkout")
+	if err != nil {
+		t.Fatalf("computeQueueList returned unexpected error: %v", err)
+	}
+	if len(queueItems) != 4 {
+		t.Fatalf("len(queueItems) = %d, want 4", len(queueItems))
+	}
+	if warning == "" {
+		t.Error("warning is empty, want one (4 items vs. the other phenomena's own average of 1 is more than 3x)")
+	}
+	if !strings.Contains(warning, "demo-area::checkout") || !strings.Contains(warning, "4") {
+		t.Errorf("warning = %q, want it to name demo-area::checkout and its own count (4)", warning)
+	}
+}
+
+func TestComputeQueueList_NoOtherPhenomenonMeansNoWarning(t *testing.T) {
+	now := time.Now().UTC()
+	var items []workqueue.Item
+	for i := 0; i < 50; i++ {
+		items = append(items, workqueue.Item{ID: fmt.Sprintf("demo-area::checkout::rule::hyp%d", i), Tier: workqueue.Blocker, CreatedAt: now})
+	}
+
+	_, _, warning, err := computeQueueList(items, "demo-area", "checkout")
+	if err != nil {
+		t.Fatalf("computeQueueList returned unexpected error: %v", err)
+	}
+	if warning != "" {
+		t.Errorf("warning = %q, want empty - there is no other phenomenon to compare against, even with 50 items", warning)
 	}
 }
 

@@ -162,13 +162,16 @@ func runQueueList(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	summaries, queueItems, err := computeQueueList(items, area, phenomenon)
+	summaries, queueItems, warning, err := computeQueueList(items, area, phenomenon)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
 
 	if area != "" && phenomenon != "" {
+		if warning != "" {
+			_, _ = fmt.Fprintf(stdout, "WARNING: %s\n", warning)
+		}
 		if len(queueItems) == 0 {
 			_, _ = fmt.Fprintf(stdout, "%s::%s: queue is empty\n", area, phenomenon)
 			return 0
@@ -211,6 +214,18 @@ type QueueItemOut struct {
 	Queued   string `json:"queued"`
 }
 
+// queueScaleWarningMultiplier is how far above this project's own
+// typical phenomenon size a drill-down's own item count has to be
+// before [computeQueueList] warns about it - explicitly chosen (by
+// the person asking for this, not derived from anything this codebase
+// measures): "avisa quando o número for 3x o que se entende como
+// ideal." No specification or prior design in this codebase names a
+// concrete "ideal" hypotheses-per-phenomenon count to compare
+// against, and inventing one here would be exactly the guess this
+// project's own discipline avoids - see [computeQueueList]'s own doc
+// comment for what this is compared against instead.
+const queueScaleWarningMultiplier = 3
+
 // computeQueueList is "conjecture queue list"'s and the "queue_list"
 // MCP tool's own shared read.
 //
@@ -235,9 +250,21 @@ type QueueItemOut struct {
 // (no area) is rejected: two distinct areas may each have a
 // phenomenon of the same name, so a bare phenomenon name cannot be
 // resolved to one.
-func computeQueueList(items []workqueue.Item, area, phenomenon string) (summaries []PhenomenonQueueSummary, queueItems []QueueItemOut, err error) {
+//
+// The drill-down's own item list has no cap of its own - realistically
+// bounded by how many hypotheses/laws one .cjtr file declares, a much
+// smaller scale than the whole-queue problem this function's own
+// summary already solves. warning is non-empty only when that
+// assumption looks wrong for real: the phenomenon being drilled into
+// has more than [queueScaleWarningMultiplier] times the average item
+// count of every *other* phenomenon currently in the queue - this
+// project's own real, observed typical size, not an invented universal
+// constant. With no other phenomenon to compare against (this is the
+// only one in the queue), there is no baseline to be unusual relative
+// to, so warning stays empty rather than guessing one.
+func computeQueueList(items []workqueue.Item, area, phenomenon string) (summaries []PhenomenonQueueSummary, queueItems []QueueItemOut, warning string, err error) {
 	if phenomenon != "" && area == "" {
-		return nil, nil, errors.New("--phenomenon requires --area (a phenomenon name alone cannot be resolved to one area)")
+		return nil, nil, "", errors.New("--phenomenon requires --area (a phenomenon name alone cannot be resolved to one area)")
 	}
 
 	if area != "" && phenomenon != "" {
@@ -250,14 +277,32 @@ func computeQueueList(items []workqueue.Item, area, phenomenon string) (summarie
 				Severity: it.Severity, Queued: it.CreatedAt.Format(time.RFC3339),
 			}
 		}
-		return nil, queueItems, nil
+
+		var otherTotal, otherCount int
+		for _, s := range queueSummaries(items) {
+			if s.PhenomenonID == phenomenonID {
+				continue
+			}
+			otherTotal += s.Total
+			otherCount++
+		}
+		if otherCount > 0 {
+			average := float64(otherTotal) / float64(otherCount)
+			if average > 0 && float64(len(filtered)) > queueScaleWarningMultiplier*average {
+				warning = fmt.Sprintf(
+					"%s has %d queued items, more than %dx this project's own average of %.1f per phenomenon elsewhere in the queue",
+					phenomenonID, len(filtered), queueScaleWarningMultiplier, average,
+				)
+			}
+		}
+		return nil, queueItems, warning, nil
 	}
 
 	summaries = queueSummaries(items)
 	if area != "" {
 		summaries = filterSummariesByArea(summaries, area)
 	}
-	return summaries, nil, nil
+	return summaries, nil, "", nil
 }
 
 // queueItemPhenomenonID extracts an item's own area::phenomenon
