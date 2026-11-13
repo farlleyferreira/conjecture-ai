@@ -380,6 +380,62 @@ func TestMCPQueueReviewTool_ReportsDeadLetteredItems(t *testing.T) {
 	}
 }
 
+func TestMCPQueueReviewTool_DefaultHidesResolvedButAllIncludesThem(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	session, _ := connectMCPTestClient(t)
+
+	queueDB, err := persistence.OpenStore(".")
+	if err != nil {
+		t.Fatalf("OpenStore returned unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = queueDB.Close() })
+	if err := workqueue.EnsureDeadLetterSchema(queueDB); err != nil {
+		t.Fatalf("EnsureDeadLetterSchema returned unexpected error: %v", err)
+	}
+	if err := workqueue.AddDeadLetter(queueDB, workqueue.DeadLetterItem{
+		ID: "demo-area::demo::rule::hyp", Tier: workqueue.Blocker, Weight: 1,
+		Reason: "domain not boundable", CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("AddDeadLetter returned unexpected error: %v", err)
+	}
+	items, err := workqueue.ListDeadLetter(queueDB, false)
+	if err != nil {
+		t.Fatalf("ListDeadLetter returned unexpected error: %v", err)
+	}
+	if err := workqueue.ResolveDeadLetter(queueDB, items[0].RowID); err != nil {
+		t.Fatalf("ResolveDeadLetter returned unexpected error: %v", err)
+	}
+
+	defaultRes, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "queue_review", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
+	}
+	defaultOut, ok := defaultRes.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want map[string]any: %+v", defaultRes.StructuredContent, defaultRes.StructuredContent)
+	}
+	if defaultItems, ok := defaultOut["items"].([]any); !ok || len(defaultItems) != 0 {
+		t.Errorf("default items = %+v, want empty (resolved item hidden)", defaultOut["items"])
+	}
+
+	allRes, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "queue_review", Arguments: map[string]any{"all": true}})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
+	}
+	allOut, ok := allRes.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want map[string]any: %+v", allRes.StructuredContent, allRes.StructuredContent)
+	}
+	allItems, ok := allOut["items"].([]any)
+	if !ok || len(allItems) != 1 {
+		t.Fatalf("all items = %+v, want exactly 1", allOut["items"])
+	}
+	item, ok := allItems[0].(map[string]any)
+	if !ok || item["resolved"] != true {
+		t.Errorf("items[0] = %+v, want resolved: true", allItems[0])
+	}
+}
+
 func TestMCPGraphInspectTool_ReportsSeededAxis(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	session, _ := connectMCPTestClient(t)
