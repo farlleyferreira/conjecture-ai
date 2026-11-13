@@ -52,13 +52,28 @@ CGO_ENABLED=1 go build -o conjecture ./cmd/conjecture
   ```
 - **An LLM provider, only for `draft`/`implement`/`work`/`attack`/`swarm`**
   (writing a spec from a plain-language ask, writing/fixing implementation
-  code, or attacking a hypothesis). Set one of:
+  code, or attacking a hypothesis). Switching providers is just a `--provider`
+  flag and that provider's own env vars - no code change needed. Set one of:
   - `ANTHROPIC_API_KEY` (provider `anthropic`, the default)
   - `DEEPSEEK_API_KEY` (provider `deepseek`)
   - a local `ollama serve` or `llama-server` (provider `llamacpp` for
     `implement`/`work`; `--runtime ollama`/`--runtime llamacpp` for
     `attack`/`swarm`) - no key needed, reachable at `http://localhost:8080`
     (llama.cpp) or `http://localhost:11434` (Ollama) by default.
+  - any provider speaking OpenAI's own Chat Completions wire format - verified
+    against nine: `OPENAI_API_KEY`+`OPENAI_MODEL` (provider `openai`),
+    `GEMINI_API_KEY`+`GEMINI_MODEL` (provider `gemini`), `GROK_API_KEY`+
+    `GROK_MODEL` (provider `grok`), `LLAMA_API_KEY`+`LLAMA_MODEL` (provider
+    `llama-api` - Meta's own hosted API, distinct from the local `llamacpp`
+    above), `MISTRAL_API_KEY`+`MISTRAL_MODEL` (provider `mistral`),
+    `COHERE_API_KEY`+`COHERE_MODEL` (provider `cohere`), `BEDROCK_API_KEY`+
+    `BEDROCK_MODEL`+`BEDROCK_REGION` (provider `bedrock`),
+    `AZURE_OPENAI_API_KEY`+`AZURE_OPENAI_MODEL`+`AZURE_OPENAI_RESOURCE`
+    (provider `azure-openai`), or `DASHSCOPE_API_KEY`+`DASHSCOPE_MODEL`+
+    `DASHSCOPE_REGION` (`intl`|`cn`) (provider `dashscope`, serves Qwen).
+    A provider exposing this same wire format but not in this list needs a
+    small preset added (base URL + env var names, no new client logic) - see
+    `internal/llmclient/openaicompatible.go`.
   `conjecture check`/`verify`/`sign`/`promote`/`context` need none of this -
   they only run already-written specs against already-written code.
 
