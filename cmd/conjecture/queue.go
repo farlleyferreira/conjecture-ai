@@ -15,7 +15,8 @@ import (
 
 const queueUsage = "usage: conjecture queue add <id> <blocker|current-task|background> [--weight <N>] [--severity <N>]\n" +
 	"       conjecture queue list [--area <area>] [--phenomenon <phenomenon>]\n" +
-	"       conjecture queue next"
+	"       conjecture queue next\n" +
+	"       conjecture queue review"
 
 // queueAgingRate and queueAgingUnit are this CLI's own default aging
 // parameters for [workqueue.Next]/[workqueue.Pop]: +1.0 effective
@@ -53,6 +54,8 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 		return runQueueList(rest, stdout, stderr)
 	case "next":
 		return runQueueNext(rest, stdout, stderr)
+	case "review":
+		return runQueueReview(rest, stdout, stderr)
 	default:
 		_, _ = fmt.Fprintln(stderr, queueUsage)
 		return 1
@@ -211,6 +214,18 @@ type QueueItemOut struct {
 	Tier     string `json:"tier"`
 	Weight   int    `json:"weight"`
 	Severity int    `json:"severity"`
+	Queued   string `json:"queued"`
+}
+
+// DeadLetterItemOut is one [workqueue.DeadLetterItem]'s own MCP/JSON-
+// facing shape - the same fields, rendered the same way
+// [printDeadLetter] already renders them for the CLI.
+type DeadLetterItemOut struct {
+	ID       string `json:"id"`
+	Tier     string `json:"tier"`
+	Weight   int    `json:"weight"`
+	Severity int    `json:"severity"`
+	Reason   string `json:"reason"`
 	Queued   string `json:"queued"`
 }
 
@@ -421,6 +436,54 @@ func popNext(db *sql.DB, stdout io.Writer) int {
 	}
 	_, _ = fmt.Fprintf(stdout, "%s: %s, weight %d, severity %d\n", item.ID, tierString(item.Tier), item.Weight, item.Severity)
 	return 0
+}
+
+// runQueueReview implements "conjecture queue review": lists every
+// item "conjecture work" has ever moved to the dead letter
+// (workqueue.AddDeadLetter, work.go) - deterministically unresolvable
+// by its own disposable implementing oracle, and so never picked up
+// automatically again. This is this capability's own read surface for
+// that: a human decides what to do with each one directly (fix the
+// hypothesis's own declared domain, implement it by hand, anything
+// else) - "conjecture queue review" itself never removes or resolves
+// anything, only reports.
+func runQueueReview(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 0 {
+		_, _ = fmt.Fprintln(stderr, queueUsage)
+		return 1
+	}
+
+	db, err := openRepoStore()
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	defer func() { _ = db.Close() }()
+	if err := workqueue.EnsureDeadLetterSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+
+	items, err := workqueue.ListDeadLetter(db)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	printDeadLetter(stdout, items)
+	return 0
+}
+
+// printDeadLetter renders items the same plain, one-line-per-fact way
+// every other command in this codebase reports to stdout.
+func printDeadLetter(stdout io.Writer, items []workqueue.DeadLetterItem) {
+	if len(items) == 0 {
+		_, _ = fmt.Fprintln(stdout, "dead letter is empty")
+		return
+	}
+	for _, it := range items {
+		_, _ = fmt.Fprintf(stdout, "%s: %s, weight %d, severity %d, reason: %s, queued %s\n",
+			it.ID, tierString(it.Tier), it.Weight, it.Severity, it.Reason, it.CreatedAt.Format(time.RFC3339))
+	}
 }
 
 func parseTier(s string) (workqueue.Tier, error) {

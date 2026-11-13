@@ -146,6 +146,9 @@ func openCheckTestStore(t *testing.T) *sql.DB {
 	if err := workqueue.EnsureSchema(db); err != nil {
 		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
 	}
+	if err := workqueue.EnsureDeadLetterSchema(db); err != nil {
+		t.Fatalf("EnsureDeadLetterSchema returned unexpected error: %v", err)
+	}
 	if err := userdefinedlaws.EnsureSchema(db); err != nil {
 		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -50,6 +51,18 @@ const workMaxAttemptsPerItem = 3
 // recordEvidence) is a confirmed violation: a hypothesis or law
 // needing its implementation fixed, which is exactly what implement
 // does. This command does not invent a second notion of "work."
+//
+// An item runImplementLoop refuses outright (ErrDomainTooComplexForOracle
+// - implement.go) is never retried: a deterministic refusal, not a
+// failure another attempt could resolve. It moves to the dead letter
+// instead (workqueue.AddDeadLetter) - still queryable via "conjecture
+// queue review," never automatically re-selected again. A dead-
+// lettered blocker-tier item stops this run outright, the same
+// "blocker preempts background work" precedence work-queue's own
+// spec already gives extended to "an unresolvable blocker halts
+// progress, it does not just get skipped"; a current-task or
+// background-tier one is logged and this run moves on to whatever
+// else remains queued.
 func runWork(args []string, stdout, stderr io.Writer) int {
 	provider := "anthropic"
 	maxRounds := implementDefaultMaxRounds
@@ -93,6 +106,10 @@ func runWork(args []string, stdout, stderr io.Writer) int {
 	}
 	defer func() { _ = db.Close() }()
 	if err := workqueue.EnsureSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	if err := workqueue.EnsureDeadLetterSchema(db); err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
@@ -162,6 +179,21 @@ func workLoop(ctx context.Context, db *sql.DB, sb *sandbox.Sandbox, client llmcl
 		_, _ = fmt.Fprintf(stdout, "%s: working (attempt %d/%d)\n", item.ID, attempts[item.ID], workMaxAttemptsPerItem)
 		specVersion := fmt.Sprintf("%x", sha256.Sum256(f.raw))
 		verdict, err := runImplementLoop(ctx, db, sb, client, rule, h, maxRounds, specVersion, isLaw, f.concepts, f.tables, stdout)
+		if errors.Is(err, ErrDomainTooComplexForOracle) {
+			if dlErr := workqueue.AddDeadLetter(db, workqueue.DeadLetterItem{
+				ID: item.ID, Tier: item.Tier, Weight: item.Weight, Severity: item.Severity,
+				Reason: err.Error(), CreatedAt: time.Now().UTC(),
+			}); dlErr != nil {
+				_, _ = fmt.Fprintf(stdout, "%s: ERROR moving to the dead letter: %v\n", item.ID, dlErr)
+			}
+			exitCode = 1
+			if item.Tier == workqueue.Blocker {
+				_, _ = fmt.Fprintf(stdout, "%s: blocker item moved to the dead letter (%v) - stopping; run \"conjecture queue review\" and resolve it before continuing\n", item.ID, err)
+				break
+			}
+			_, _ = fmt.Fprintf(stdout, "%s: moved to the dead letter (%v)\n", item.ID, err)
+			continue
+		}
 		if err != nil {
 			_, _ = fmt.Fprintf(stdout, "%s: ERROR: %v\n", item.ID, err)
 			exitCode = 1
@@ -202,6 +234,15 @@ func resolveQueueItem(id, root string) (path, ruleID, hypothesisID string, err e
 	}
 }
 
+// joinPhenomenonPath resolves a .cjtr file's real on-disk path from
+// root (the repository root) and its own area/phenomenon -
+// persistence's own "Git-tracked specification files" layout
+// ([persistence.EnsureWorkingLayout]'s own "conjecture/phenomena/"
+// tree, the one "conjecture init" actually creates), not a layout
+// this command invents of its own. Confirmed by running "conjecture
+// work" for real against a real "conjecture init"-created repository
+// as a non-root user: the prior version of this function (missing
+// the "conjecture/" segment) could never find a real file at all.
 func joinPhenomenonPath(root, area, phenomenon string) string {
-	return filepath.Join(root, "phenomena", area, phenomenon+".cjtr")
+	return filepath.Join(root, "conjecture", "phenomena", area, phenomenon+".cjtr")
 }
