@@ -17,6 +17,16 @@ import (
 
 const signUsage = "usage: conjecture sign [--user <name>] [--confirmed] <file.cjtr>"
 
+// openDecisionStore is runSign's own store resolver for recording a
+// candidate-review decision - a test hook, like sandbox.Sandbox's own
+// DockerBinary field: a real caller leaves this as [openRepoStore],
+// resolving the real per-OS system path; a test overrides it with a
+// temporary store instead, since that real path (e.g. "/var/lib/
+// conjecture" on Linux) is not guaranteed writable by whatever user a
+// test process runs as - a real finding from this exact test failing
+// in CI, not a hypothetical.
+var openDecisionStore = openRepoStore
+
 // runSign signs a .cjtr file in place (see cjtr.Sign): it refuses when
 // the file has an unresolved "???" marker, and otherwise replaces any
 // existing "signed" block with a new one recording the given (or
@@ -79,7 +89,7 @@ func runSign(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if confirmed {
-		db, err := openRepoStore()
+		db, err := openDecisionStore()
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "conjecture: signed but could not record the decision: %v\n", err)
 			return 1
