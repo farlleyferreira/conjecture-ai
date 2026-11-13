@@ -136,6 +136,11 @@ func newMCPServer(db *sql.DB) *mcp.Server {
 	}, statusToolFor(db))
 
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "project_status",
+		Description: "Read the project-wide aggregate \"status\" itself cannot give: every .cjtr file under conjecture/phenomena/, summed by signed/confirmed state and by each judged hypothesis/law's own maturity stage (Hypothesis/Thesis/Theory/Law) and, for a law, its own status - the same aggregate \"conjecture status\" (no path argument) reports from the CLI. Pure read.",
+	}, projectStatusToolFor(db))
+
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "context_list",
 		Description: "List saved verification contexts, optionally filtered by area and/or a created-at date range - the same listing \"conjecture context list\" prints from the CLI. Pure read.",
 	}, contextListToolFor(db))
@@ -340,5 +345,30 @@ func statusToolFor(db *sql.DB) func(context.Context, *mcp.CallToolRequest, statu
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: report.String()}},
 		}, status, nil
+	}
+}
+
+// projectStatusToolFor closes over db for the same reason
+// [statusToolFor] does. It takes no input - "conjecture status" with
+// no path argument takes none either - so repoRoot is resolved fresh
+// on every call via os.Getwd(), the same way [contextOriginToolFor]'s
+// own repoRoot already is.
+func projectStatusToolFor(db *sql.DB) func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, ProjectStatusSummary, error) {
+	return func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, ProjectStatusSummary, error) {
+		repoRoot, err := os.Getwd()
+		if err != nil {
+			return nil, ProjectStatusSummary{}, err
+		}
+
+		summary, err := computeProjectStatus(db, repoRoot)
+		if err != nil {
+			return nil, ProjectStatusSummary{}, err
+		}
+
+		var report bytes.Buffer
+		printProjectStatus(&report, summary)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: report.String()}},
+		}, summary, nil
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"os"
 	"testing"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/contextcomposition"
@@ -213,6 +214,59 @@ func TestMCPStatusTool_MissingFileReportsError(t *testing.T) {
 	}
 	if !res.IsError {
 		t.Error("CallTool result IsError = false for a missing file, want true")
+	}
+}
+
+func TestMCPServer_ProjectStatusToolIsRegistered(t *testing.T) {
+	session, _ := connectMCPTestClient(t)
+
+	res, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools returned unexpected error: %v", err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name == "project_status" {
+			return
+		}
+	}
+	t.Errorf("ListTools = %+v, want a \"project_status\" tool", res.Tools)
+}
+
+func TestMCPProjectStatusTool_AggregatesAcrossFiles(t *testing.T) {
+	session, db := connectMCPTestClient(t)
+
+	repoRoot := t.TempDir()
+	writeProjectStatusFixture(t, repoRoot, "demo-area", "demo", statusFixture)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd returned unexpected error: %v", err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("Chdir returned unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	hypothesisID := "demo-area::demo::shipping-rule::fee-matches"
+	if _, err := evidenceledger.Append(db, evidenceledger.Evidence{
+		HypothesisID: hypothesisID, Stage: evidenceledger.Hypothesis,
+		ProducedBy: "test", ValidityHash: []byte("x"),
+	}); err != nil {
+		t.Fatalf("evidenceledger.Append returned unexpected error: %v", err)
+	}
+
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "project_status", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("CallTool result IsError = true, content: %+v", res.Content)
+	}
+	out, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want map[string]any: %+v", res.StructuredContent, res.StructuredContent)
+	}
+	if out["files"] != float64(1) {
+		t.Errorf("project_status.files = %v, want 1", out["files"])
 	}
 }
 

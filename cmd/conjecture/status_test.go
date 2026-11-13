@@ -84,10 +84,124 @@ func openStatusTestStore(t *testing.T) *sql.DB {
 	return db
 }
 
-func TestRunStatus_WrongArgCountIsUsageError(t *testing.T) {
+// writeProjectStatusFixture writes content at
+// "<repoRoot>/conjecture/phenomena/<area>/<phenomenon>.cjtr" -
+// [computeProjectStatus]'s own real walk root, distinct from
+// [writeStatusFixture]'s own "<tempdir>/phenomena/<area>/..." (no
+// "conjecture/" wrapper - [loadFicha] itself never needed one, only
+// this project-wide walk does).
+func writeProjectStatusFixture(t *testing.T, repoRoot, area, phenomenon, content string) string {
+	t.Helper()
+	dir := filepath.Join(repoRoot, "conjecture", "phenomena", area)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	path := filepath.Join(dir, phenomenon+".cjtr")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	return path
+}
+
+func TestComputeProjectStatus_NoPhenomenaDirIsEmptyNotError(t *testing.T) {
+	db := openStatusTestStore(t)
+	summary, err := computeProjectStatus(db, t.TempDir())
+	if err != nil {
+		t.Fatalf("computeProjectStatus returned unexpected error: %v", err)
+	}
+	if summary.Files != 0 {
+		t.Errorf("summary.Files = %d, want 0 for a repo with no conjecture/phenomena/ yet", summary.Files)
+	}
+}
+
+func TestComputeProjectStatus_AggregatesAcrossFiles(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeProjectStatusFixture(t, repoRoot, "demo-area", "demo", statusFixture)
+	db := openStatusTestStore(t)
+
+	hypothesisID := "demo-area::demo::shipping-rule::fee-matches"
+	if _, err := evidenceledger.Append(db, evidenceledger.Evidence{
+		HypothesisID: hypothesisID, Stage: evidenceledger.Thesis,
+		ProducedBy: "test", ValidityHash: []byte("x"),
+	}); err != nil {
+		t.Fatalf("evidenceledger.Append returned unexpected error: %v", err)
+	}
+	lawID := "demo-area::demo::fee-never-negative"
+	if _, err := evidenceledger.Append(db, evidenceledger.Evidence{
+		HypothesisID: lawID, Stage: evidenceledger.Hypothesis,
+		ProducedBy: "test", ValidityHash: []byte("x"),
+	}); err != nil {
+		t.Fatalf("evidenceledger.Append returned unexpected error: %v", err)
+	}
+	if err := userdefinedlaws.SetStatus(db, lawID, userdefinedlaws.Conformant); err != nil {
+		t.Fatalf("userdefinedlaws.SetStatus returned unexpected error: %v", err)
+	}
+
+	summary, err := computeProjectStatus(db, repoRoot)
+	if err != nil {
+		t.Fatalf("computeProjectStatus returned unexpected error: %v", err)
+	}
+	if summary.Files != 1 {
+		t.Errorf("summary.Files = %d, want 1", summary.Files)
+	}
+	if summary.Unsigned != 1 || summary.Signed != 0 {
+		t.Errorf("summary signed/unsigned = %d/%d, want 0/1 (fixture is unsigned)", summary.Signed, summary.Unsigned)
+	}
+	if summary.Thesis != 1 {
+		t.Errorf("summary.Thesis = %d, want 1 (fee-matches)", summary.Thesis)
+	}
+	if summary.Hypothesis != 1 {
+		t.Errorf("summary.Hypothesis = %d, want 1 (fee-never-negative)", summary.Hypothesis)
+	}
+	if summary.LawStatuses["conformant"] != 1 {
+		t.Errorf("summary.LawStatuses = %+v, want conformant: 1", summary.LawStatuses)
+	}
+}
+
+func TestComputeProjectStatus_MalformedFileDisclosedNotDropped(t *testing.T) {
+	repoRoot := t.TempDir()
+	writeProjectStatusFixture(t, repoRoot, "demo-area", "bad", "not: [valid, cjtr")
+	db := openStatusTestStore(t)
+
+	summary, err := computeProjectStatus(db, repoRoot)
+	if err != nil {
+		t.Fatalf("computeProjectStatus returned unexpected error: %v", err)
+	}
+	if summary.Files != 1 {
+		t.Errorf("summary.Files = %d, want 1 (counted even though it failed to load)", summary.Files)
+	}
+	if len(summary.Errors) != 1 {
+		t.Fatalf("summary.Errors = %+v, want exactly one disclosed load failure", summary.Errors)
+	}
+}
+
+func TestRunStatus_ProjectWideAggregateReportsSummary(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	repoRoot := t.TempDir()
+	writeProjectStatusFixture(t, repoRoot, "demo-area", "demo", statusFixture)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd returned unexpected error: %v", err)
+	}
+	if err := os.Chdir(repoRoot); err != nil {
+		t.Fatalf("Chdir returned unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
 	var stdout, stderr bytes.Buffer
-	if code := runStatus(nil, &stdout, &stderr); code != 1 {
-		t.Errorf("runStatus with no args exit code = %d, want 1", code)
+	if code := runStatus(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("runStatus exit code = %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "project: 1 files") {
+		t.Errorf("stdout = %q, want it to report the project-wide file count", stdout.String())
+	}
+}
+
+func TestRunStatus_TooManyArgsIsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := runStatus([]string{"a.cjtr", "b.cjtr"}, &stdout, &stderr); code != 1 {
+		t.Errorf("runStatus with two args exit code = %d, want 1", code)
 	}
 	if !strings.Contains(stderr.String(), statusUsage) {
 		t.Errorf("stderr = %q, want it to contain %q", stderr.String(), statusUsage)

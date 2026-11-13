@@ -4,7 +4,11 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
@@ -13,7 +17,7 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/userdefinedlaws"
 )
 
-const statusUsage = "usage: conjecture status <file.cjtr>"
+const statusUsage = "usage: conjecture status [file.cjtr]"
 
 // StatusEntry is one judged hypothesis or user-defined law's own
 // current state, aggregated read-only from the evidence ledger (and,
@@ -65,24 +69,21 @@ type Status struct {
 	Notes []string `json:"notes,omitempty"`
 }
 
-// runStatus implements "conjecture status <file.cjtr>" - a pure read:
-// it never writes to the file's own "signed" block, the evidence
+// runStatus implements "conjecture status [file.cjtr]" - a pure read:
+// it never writes to a file's own "signed" block, the evidence
 // ledger, or user-defined-laws' own status table, only to stdout.
+// With a path, it reports that one file's own aggregated state
+// (unchanged behavior). With none, it reports the project-wide
+// aggregate instead - see [computeProjectStatus]'s own doc comment
+// for why that gap existed and what this closes.
 //
-// This command, and its own single-argument shape, is this project's
-// own invention: no specification names a verb for reading this
+// This command, and its own argument shape, is this project's own
+// invention: no specification names a verb for reading either
 // aggregate back, the same disclosed situation check.go's own doc
 // comment already notes for "conjecture check"'s shape.
 func runStatus(args []string, stdout, stderr io.Writer) int {
-	if len(args) != 1 {
+	if len(args) > 1 {
 		_, _ = fmt.Fprintln(stderr, statusUsage)
-		return 1
-	}
-	path := args[0]
-
-	f, err := loadFicha(path)
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
 
@@ -102,6 +103,22 @@ func runStatus(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if err := userdefinedlaws.EnsureSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+
+	if len(args) == 0 {
+		summary, err := computeProjectStatus(db, repoRoot)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+			return 1
+		}
+		printProjectStatus(stdout, summary)
+		return 0
+	}
+
+	f, err := loadFicha(args[0])
+	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
@@ -235,5 +252,128 @@ func printStatus(stdout io.Writer, s Status) {
 
 	for _, n := range s.Notes {
 		_, _ = fmt.Fprintf(stdout, "NOTE: %s\n", n)
+	}
+}
+
+// ProjectStatusSummary is the project-wide aggregate "status" itself
+// cannot give (it only ever reads one file): every ".cjtr" file under
+// "conjecture/phenomena/", summed by signed/confirmed state and by
+// each judged hypothesis/law's own maturity [evidenceledger.Stage]
+// and (for a law) [userdefinedlaws.Status]. Before this, answering
+// "how many theses does this project have" meant calling "status" on
+// every file by hand and adding the counts yourself - a real,
+// disclosed gap this closes.
+type ProjectStatusSummary struct {
+	Files        int `json:"files"`
+	Signed       int `json:"signed"`
+	Unsigned     int `json:"unsigned"`
+	Confirmed    int `json:"confirmed"`
+	NeverChecked int `json:"never_checked"`
+	// Stage counts, by [evidenceledger.Stage.String]'s own four
+	// values - every *checked* hypothesis/law falls into exactly one.
+	Hypothesis int `json:"hypothesis_stage"`
+	Thesis     int `json:"thesis_stage"`
+	Theory     int `json:"theory_stage"`
+	Law        int `json:"law_stage"`
+	// LawStatuses counts every user-defined law by its own
+	// [userdefinedlaws.Status.String] - a plain hypothesis has none.
+	LawStatuses map[string]int `json:"law_statuses,omitempty"`
+	// Errors names every file this walk could not fully read (a
+	// malformed ".cjtr", a rule body [computeStatus] could not parse)
+	// - disclosed rather than silently excluded from the counts above,
+	// the same "disclose, don't swallow" posture [Status.Notes]
+	// already takes per file.
+	Errors []string `json:"errors,omitempty"`
+}
+
+// computeProjectStatus walks every ".cjtr" file under
+// "conjecture/phenomena/" (cjtr-language's own path convention) and
+// sums each one's own [computeStatus] into one [ProjectStatusSummary].
+// A repository with no "conjecture/phenomena/" directory yet (before
+// "conjecture init", or one that genuinely has no phenomena) is not an
+// error - an empty summary is a legitimate, honestly-reportable state.
+func computeProjectStatus(db *sql.DB, repoRoot string) (ProjectStatusSummary, error) {
+	out := ProjectStatusSummary{LawStatuses: map[string]int{}}
+	root := filepath.Join(repoRoot, "conjecture", "phenomena")
+
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() || filepath.Ext(path) != ".cjtr" {
+			return nil
+		}
+		out.Files++
+
+		f, loadErr := loadFicha(path)
+		if loadErr != nil {
+			out.Errors = append(out.Errors, fmt.Sprintf("%s: %v", path, loadErr))
+			return nil
+		}
+		if f.signed != nil {
+			out.Signed++
+			if f.signed.Confirmed {
+				out.Confirmed++
+			}
+		} else {
+			out.Unsigned++
+		}
+
+		status, statusErr := computeStatus(db, f)
+		if statusErr != nil {
+			out.Errors = append(out.Errors, fmt.Sprintf("%s: %v", path, statusErr))
+			return nil
+		}
+		for _, e := range status.Entries {
+			if !e.Checked {
+				out.NeverChecked++
+				continue
+			}
+			switch e.Stage {
+			case evidenceledger.Hypothesis.String():
+				out.Hypothesis++
+			case evidenceledger.Thesis.String():
+				out.Thesis++
+			case evidenceledger.Theory.String():
+				out.Theory++
+			case evidenceledger.Law.String():
+				out.Law++
+			}
+			if e.IsLaw && e.LawStatus != "" {
+				out.LawStatuses[e.LawStatus]++
+			}
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return ProjectStatusSummary{}, walkErr
+	}
+	return out, nil
+}
+
+// printProjectStatus renders s the same plain, one-line-per-fact way
+// [printStatus] renders a single file's own state.
+func printProjectStatus(stdout io.Writer, s ProjectStatusSummary) {
+	_, _ = fmt.Fprintf(stdout, "project: %d files (%d signed, %d unsigned; %d confirmed)\n", s.Files, s.Signed, s.Unsigned, s.Confirmed)
+	_, _ = fmt.Fprintf(stdout, "stages: hypothesis %d, thesis %d, theory %d, law %d, never checked %d\n", s.Hypothesis, s.Thesis, s.Theory, s.Law, s.NeverChecked)
+
+	if len(s.LawStatuses) > 0 {
+		keys := make([]string, 0, len(s.LawStatuses))
+		for k := range s.LawStatuses {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, len(keys))
+		for i, k := range keys {
+			parts[i] = fmt.Sprintf("%s %d", k, s.LawStatuses[k])
+		}
+		_, _ = fmt.Fprintf(stdout, "law statuses: %s\n", strings.Join(parts, ", "))
+	}
+
+	for _, e := range s.Errors {
+		_, _ = fmt.Fprintf(stdout, "NOTE: %s\n", e)
 	}
 }
