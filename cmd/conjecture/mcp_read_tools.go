@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"io"
 	"os"
 
+	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -145,14 +147,70 @@ func contextResolveConflictTool(_ context.Context, _ *mcp.CallToolRequest, args 
 	})
 }
 
-// queueListTool takes no input: "conjecture queue list" itself takes
-// none either. Unlike the context tools above, it needs no db from
-// [newMCPServer] - [runQueueList] already opens and closes its own
-// connection, same as "verify"/"check".
-func queueListTool(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, textReadOutput, error) {
-	return textReadTool(func(stdout, stderr io.Writer) int {
-		return runQueueList(nil, stdout, stderr)
-	})
+// queueListArgs is "queue_list"'s own tool input - the same optional
+// --area/--phenomenon filters "conjecture queue list" takes from the
+// CLI; see [computeQueueList]'s own doc comment for what each
+// combination returns.
+type queueListArgs struct {
+	Area       string `json:"area,omitempty" jsonschema:"only include this area's own phenomena"`
+	Phenomenon string `json:"phenomenon,omitempty" jsonschema:"drill into exactly this phenomenon's own queued items instead of the summary (requires area)"`
+}
+
+// queueListOutput is "queue_list"'s own structured result: exactly
+// one of Summaries or Items is populated, never both - see
+// [computeQueueList]'s own doc comment for which.
+type queueListOutput struct {
+	Summaries []PhenomenonQueueSummary `json:"summaries,omitempty"`
+	Items     []QueueItemOut           `json:"items,omitempty"`
+}
+
+// queueListTool needs no db from [newMCPServer] - [workqueue.List]'s
+// own store is opened directly, same as "conjecture queue list"
+// itself (runQueueList). Unlike every other tool in this file, it
+// does not use the shared [textReadOutput]: [computeQueueList]'s own
+// per-phenomenon grouping is exactly the kind of structure an agent
+// would want to read programmatically (deciding whether to drill
+// further) rather than parse back out of text, the same reasoning
+// "status" already applies.
+func queueListTool(_ context.Context, _ *mcp.CallToolRequest, args queueListArgs) (*mcp.CallToolResult, queueListOutput, error) {
+	db, err := openRepoStore()
+	if err != nil {
+		return nil, queueListOutput{}, err
+	}
+	defer func() { _ = db.Close() }()
+	if err := workqueue.EnsureSchema(db); err != nil {
+		return nil, queueListOutput{}, err
+	}
+	items, err := workqueue.List(db)
+	if err != nil {
+		return nil, queueListOutput{}, err
+	}
+
+	summaries, queueItems, err := computeQueueList(items, args.Area, args.Phenomenon)
+	if err != nil {
+		return nil, queueListOutput{}, err
+	}
+
+	var report bytes.Buffer
+	if args.Area != "" && args.Phenomenon != "" {
+		if len(queueItems) == 0 {
+			fmt.Fprintf(&report, "%s::%s: queue is empty\n", args.Area, args.Phenomenon)
+		}
+		for _, it := range queueItems {
+			fmt.Fprintf(&report, "%s: %s, weight %d, severity %d, queued %s\n", it.ID, it.Tier, it.Weight, it.Severity, it.Queued)
+		}
+	} else {
+		if len(summaries) == 0 {
+			fmt.Fprintln(&report, "queue is empty")
+		}
+		for _, s := range summaries {
+			fmt.Fprintf(&report, "%s: %d items (blocker %d, current-task %d, background %d)\n", s.PhenomenonID, s.Total, s.Blocker, s.CurrentTask, s.Background)
+		}
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: report.String()}},
+	}, queueListOutput{Summaries: summaries, Items: queueItems}, nil
 }
 
 // graphInspectArgs is "graph_inspect"'s own tool input - [node-id]
