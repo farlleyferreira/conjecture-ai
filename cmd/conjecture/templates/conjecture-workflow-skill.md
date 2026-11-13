@@ -1,7 +1,7 @@
 ---
 name: conjecture-workflow
 description: Draft a business-rule specification together with the user as a .cjtr file, verify it, have the user sign it, then write the real implementation and verify it conforms via conjecture's MCP tools. Use when the user wants to specify a precise behavior/business rule and have real code checked against it, or mentions conjecture, .cjtr, or a "verifiable specification".
-license: MIT
+license: Apache-2.0
 compatibility: Requires a running "conjecture mcp" server connected to this session, and (for the "check" step) a container runtime reachable from wherever that server process runs.
 metadata:
   author: conjecture
