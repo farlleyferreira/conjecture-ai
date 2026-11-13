@@ -2,8 +2,16 @@ package languageagnosticcontracts
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
+
+// errBoom is a shared stand-in failure, reused by both platform
+// backends' own test files (guidriver_windows_test.go,
+// guidriver_linux_test.go) - defined here, in a file with no GOOS
+// suffix, since only one of those two ever compiles for a given
+// target.
+var errBoom = errors.New("boom")
 
 func TestRole_String(t *testing.T) {
 	tests := []struct {

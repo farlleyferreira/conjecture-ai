@@ -3,6 +3,7 @@ module github.com/farlleyferreira/conjecture-ai
 go 1.25.0
 
 require (
+	github.com/godbus/dbus/v5 v5.2.4
 	github.com/google/cel-go v0.29.0
 	github.com/mackerelio/go-osstat v0.2.8
 	github.com/modelcontextprotocol/go-sdk v1.8.0
