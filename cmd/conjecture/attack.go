@@ -176,10 +176,13 @@ func buildAttackRunner(runtime, model, baseURL string) (attackRunner, error) {
 // and the real per-OS one [persistence.OpenStore] would otherwise
 // open.
 func attackHypothesis(ctx context.Context, db *sql.DB, f loadedFicha, hypothesisID string, runner attackRunner, slmLabel string, stdout, stderr io.Writer) int {
-	h, compositeID, interfaceText, found := findHypothesisByID(f, hypothesisID)
+	h, compositeID, interfaceText, isLaw, found := findHypothesisByID(f, hypothesisID)
 	if !found {
 		_, _ = fmt.Fprintf(stderr, "conjecture: no hypothesis with id %q in %s\n", hypothesisID, f.phenomenon)
 		return 1
+	}
+	if isLaw {
+		_, _ = fmt.Fprintf(stdout, "%s: WARNING: this is a law (always Critical weight) - a single local-model opinion is weaker evidence than that stakes warrant; consider \"conjecture swarm attack\" for diversified coverage instead\n", compositeID)
 	}
 
 	history, err := evidenceledger.History(db, compositeID)
@@ -213,6 +216,13 @@ func attackHypothesis(ctx context.Context, db *sql.DB, f loadedFicha, hypothesis
 		ProducedBy:   adversarialSLMProducedBy,
 		ValidityHash: evidenceledger.ValidityHash(specVersion, "", version.String(), slmLabel, ""),
 	}
+	if isLaw {
+		// Disclosed the same way check.go's own unrunRigorLevelsNote
+		// discloses what a verdict's own rigor level did not cover -
+		// this evidence is a single, correlated-risk local-model
+		// opinion, weaker than a law's always-Critical weight warrants.
+		evidence.Unchecked = "law attacked by a single local model (one strategy) - consider \"conjecture swarm attack\" for diversified coverage"
+	}
 	switch output.Outcome {
 	case adversarialslm.ViolationFound:
 		evidence.Attacked = violationCounterexamplePrefix + output.Counterexample
@@ -241,12 +251,15 @@ func attackHypothesis(ctx context.Context, db *sql.DB, f loadedFicha, hypothesis
 // ID matches hypothesisID, returning it alongside the composite ID
 // [evidenceledger.Evidence.HypothesisID] already uses for it (the
 // same compositeID+"::"+h.ID scheme check.go's own recordEvidence
-// already builds) and its rule's own declared "when" interface
-// ("" for a file-level law, which has no associated rule).
-func findHypothesisByID(f loadedFicha, hypothesisID string) (h cjtr.Hypothesis, compositeID, interfaceText string, found bool) {
+// already builds), its rule's own declared "when" interface ("" for a
+// file-level law, which has no associated rule), and whether it was
+// found among the file's laws rather than its plain hypotheses - see
+// [attackHypothesis]'s own law-weight warning for why that distinction
+// matters to this command specifically.
+func findHypothesisByID(f loadedFicha, hypothesisID string) (h cjtr.Hypothesis, compositeID, interfaceText string, isLaw, found bool) {
 	for _, candidate := range f.fileLaws {
 		if candidate.ID == hypothesisID {
-			return candidate, f.phenomenonID + "::" + candidate.ID, "", true
+			return candidate, f.phenomenonID + "::" + candidate.ID, "", true, true
 		}
 	}
 	for _, rule := range f.rules {
@@ -254,7 +267,7 @@ func findHypothesisByID(f loadedFicha, hypothesisID string) (h cjtr.Hypothesis, 
 		if err == nil {
 			for _, candidate := range hyps {
 				if candidate.ID == hypothesisID {
-					return candidate, rule.CompositeID + "::" + candidate.ID, rule.When, true
+					return candidate, rule.CompositeID + "::" + candidate.ID, rule.When, false, true
 				}
 			}
 		}
@@ -262,12 +275,12 @@ func findHypothesisByID(f loadedFicha, hypothesisID string) (h cjtr.Hypothesis, 
 		if err == nil {
 			for _, candidate := range laws {
 				if candidate.ID == hypothesisID {
-					return candidate, rule.CompositeID + "::" + candidate.ID, rule.When, true
+					return candidate, rule.CompositeID + "::" + candidate.ID, rule.When, true, true
 				}
 			}
 		}
 	}
-	return cjtr.Hypothesis{}, "", "", false
+	return cjtr.Hypothesis{}, "", "", false, false
 }
 
 // buildAttackInput builds h's own [adversarialslm.AttackInput] -

@@ -300,7 +300,7 @@ func runPromoteLaw(args []string, stdout, stderr io.Writer) int {
 // hiddenSamplesConformant/newCodeVersionsConformant as given, and - if
 // every condition holds - appends a Law-stage evidence record.
 func promoteLaw(db *sql.DB, f loadedFicha, hypothesisID string, hiddenSamplesConformant, newCodeVersionsConformant bool, decidedBy string, stdout, stderr io.Writer) int {
-	h, compositeID, _, found := findHypothesisByID(f, hypothesisID)
+	h, compositeID, _, _, found := findHypothesisByID(f, hypothesisID)
 	if !found {
 		_, _ = fmt.Fprintf(stderr, "conjecture: no hypothesis with id %q in %s\n", hypothesisID, f.phenomenon)
 		return 1

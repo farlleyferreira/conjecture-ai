@@ -102,7 +102,7 @@ func TestFindHypothesisByID_FindsRuleScopedHypothesis(t *testing.T) {
 		t.Fatalf("loadFicha returned unexpected error: %v", err)
 	}
 
-	h, compositeID, interfaceText, found := findHypothesisByID(f, "fee-matches")
+	h, compositeID, interfaceText, isLaw, found := findHypothesisByID(f, "fee-matches")
 	if !found {
 		t.Fatal("findHypothesisByID found = false, want true")
 	}
@@ -115,6 +115,9 @@ func TestFindHypothesisByID_FindsRuleScopedHypothesis(t *testing.T) {
 	if interfaceText != "" {
 		t.Errorf("interfaceText = %q, want empty (the fixture's rule declares no \"when\")", interfaceText)
 	}
+	if isLaw {
+		t.Error("isLaw = true for a plain hypothesis, want false")
+	}
 }
 
 func TestFindHypothesisByID_UnknownIDNotFound(t *testing.T) {
@@ -123,7 +126,7 @@ func TestFindHypothesisByID_UnknownIDNotFound(t *testing.T) {
 		t.Fatalf("loadFicha returned unexpected error: %v", err)
 	}
 
-	_, _, _, found := findHypothesisByID(f, "no-such-id")
+	_, _, _, _, found := findHypothesisByID(f, "no-such-id")
 	if found {
 		t.Error("findHypothesisByID found = true for an unknown id, want false")
 	}
@@ -134,7 +137,7 @@ func TestBuildAttackInput_UniversalHypothesisAssertion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadFicha returned unexpected error: %v", err)
 	}
-	h, _, interfaceText, found := findHypothesisByID(f, "fee-matches")
+	h, _, interfaceText, _, found := findHypothesisByID(f, "fee-matches")
 	if !found {
 		t.Fatal("findHypothesisByID found = false, want true")
 	}
@@ -156,7 +159,7 @@ func TestBuildAttackInput_PriorResultsOnlyFromAdversarialSLMEvidence(t *testing.
 	if err != nil {
 		t.Fatalf("loadFicha returned unexpected error: %v", err)
 	}
-	h, _, _, found := findHypothesisByID(f, "fee-matches")
+	h, _, _, _, found := findHypothesisByID(f, "fee-matches")
 	if !found {
 		t.Fatal("findHypothesisByID found = false, want true")
 	}
@@ -176,6 +179,53 @@ func TestBuildAttackInput_PriorResultsOnlyFromAdversarialSLMEvidence(t *testing.
 	}
 	if input.PriorResults[1].Outcome != adversarialslm.ViolationFound || input.PriorResults[1].Counterexample != "x = -1" {
 		t.Errorf("PriorResults[1] = %+v, want ViolationFound with counterexample \"x = -1\"", input.PriorResults[1])
+	}
+}
+
+func TestAttackHypothesis_LawWarnsAboutSingleOpinion(t *testing.T) {
+	f, err := loadFicha(writeImplementFixtureWithLaw(t))
+	if err != nil {
+		t.Fatalf("loadFicha returned unexpected error: %v", err)
+	}
+	db := openCheckTestStore(t)
+	runner := &fakeAttackRunner{output: adversarialslm.AttackOutput{Outcome: adversarialslm.NoViolationFound}}
+
+	var stdout, stderr bytes.Buffer
+	code := attackHypothesis(context.Background(), db, f, "result-law", runner, "test-model", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("attackHypothesis returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "WARNING") || !strings.Contains(stdout.String(), "swarm") {
+		t.Errorf("stdout = %q, want a warning recommending swarm for a law", stdout.String())
+	}
+
+	history, err := evidenceledger.History(db, "demo-area::demo::result-rule::result-law")
+	if err != nil {
+		t.Fatalf("History returned unexpected error: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("len(history) = %d, want 1", len(history))
+	}
+	if !strings.Contains(history[0].Unchecked, "swarm") {
+		t.Errorf("history[0].Unchecked = %q, want it to recommend swarm for a law", history[0].Unchecked)
+	}
+}
+
+func TestAttackHypothesis_PlainHypothesisNoLawWarning(t *testing.T) {
+	f, err := loadFicha(writeCheckFixture(t))
+	if err != nil {
+		t.Fatalf("loadFicha returned unexpected error: %v", err)
+	}
+	db := openCheckTestStore(t)
+	runner := &fakeAttackRunner{output: adversarialslm.AttackOutput{Outcome: adversarialslm.NoViolationFound}}
+
+	var stdout, stderr bytes.Buffer
+	code := attackHypothesis(context.Background(), db, f, "fee-matches", runner, "test-model", &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("attackHypothesis returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "WARNING") {
+		t.Errorf("stdout = %q, want no law warning for a plain hypothesis", stdout.String())
 	}
 }
 
