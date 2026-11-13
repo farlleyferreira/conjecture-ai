@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -256,6 +257,86 @@ func TestRunQueueReview_WrongArgCountIsUsageError(t *testing.T) {
 	code := runQueueReview([]string{"extra"}, &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("runQueueReview with an arg = %d, want 1", code)
+	}
+}
+
+func TestRunQueueReview_ResolveRemovesItemFromDefaultListingButAllStillShowsIt(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	db, err := persistence.OpenStore(".")
+	if err != nil {
+		t.Fatalf("OpenStore returned unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := workqueue.EnsureDeadLetterSchema(db); err != nil {
+		t.Fatalf("EnsureDeadLetterSchema returned unexpected error: %v", err)
+	}
+	if err := workqueue.AddDeadLetter(db, workqueue.DeadLetterItem{
+		ID: "demo-area::demo::rule::hyp", Tier: workqueue.Blocker, Weight: 1,
+		Reason: "domain not boundable", CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("AddDeadLetter returned unexpected error: %v", err)
+	}
+	items, err := workqueue.ListDeadLetter(db, false)
+	if err != nil {
+		t.Fatalf("ListDeadLetter returned unexpected error: %v", err)
+	}
+	rowID := items[0].RowID
+	_ = db.Close()
+
+	var resolveOut, resolveErr bytes.Buffer
+	code := runQueueReview([]string{"--resolve", strconv.FormatInt(rowID, 10)}, &resolveOut, &resolveErr)
+	if code != 0 {
+		t.Fatalf("runQueueReview --resolve exit code = %d, stderr: %s", code, resolveErr.String())
+	}
+
+	var defaultOut, defaultErr bytes.Buffer
+	if code := runQueueReview(nil, &defaultOut, &defaultErr); code != 0 {
+		t.Fatalf("runQueueReview exit code = %d, stderr: %s", code, defaultErr.String())
+	}
+	if !strings.Contains(defaultOut.String(), "dead letter is empty") {
+		t.Errorf("default listing after resolving the only row = %q, want it to report empty", defaultOut.String())
+	}
+
+	var allOut, allErr bytes.Buffer
+	if code := runQueueReview([]string{"--all"}, &allOut, &allErr); code != 0 {
+		t.Fatalf("runQueueReview --all exit code = %d, stderr: %s", code, allErr.String())
+	}
+	if !strings.Contains(allOut.String(), "demo-area::demo::rule::hyp") || !strings.Contains(allOut.String(), "resolved") {
+		t.Errorf("--all listing = %q, want the resolved item reported as resolved", allOut.String())
+	}
+}
+
+func TestRunQueueReview_ResolveUnknownRowIDErrors(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+
+	var stdout, stderr bytes.Buffer
+	code := runQueueReview([]string{"--resolve", "999"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("runQueueReview --resolve on an unknown row id = %d, want 1", code)
+	}
+}
+
+func TestRunQueueReview_ResolveMissingValueIsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runQueueReview([]string{"--resolve"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("runQueueReview --resolve with no value = %d, want 1", code)
+	}
+}
+
+func TestRunQueueReview_ResolveNonIntegerValueIsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runQueueReview([]string{"--resolve", "not-a-number"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("runQueueReview --resolve with a non-integer value = %d, want 1", code)
+	}
+}
+
+func TestRunQueueReview_ResolveAndAllTogetherIsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runQueueReview([]string{"--resolve", "1", "--all"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("runQueueReview --resolve with --all = %d, want 1", code)
 	}
 }
 

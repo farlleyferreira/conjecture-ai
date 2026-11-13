@@ -227,10 +227,23 @@ type queueReviewOutput struct {
 	Items []DeadLetterItemOut `json:"items"`
 }
 
+// queueReviewArgs is "queue_review"'s own tool input - All mirrors the
+// CLI's own "--all" ("conjecture queue review"): false (the default)
+// lists only unresolved items, true also includes items a human has
+// already resolved via the CLI. There is no resolve argument here -
+// see [queueReviewTool]'s own doc comment for why.
+type queueReviewArgs struct {
+	All bool `json:"all,omitempty" jsonschema:"also list already-resolved items (default: only unresolved)"`
+}
+
 // queueReviewTool needs no db from [newMCPServer], for the same
 // reason [queueListTool] does not - [workqueue.ListDeadLetter] opens
-// its own connection via openRepoStore.
-func queueReviewTool(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, queueReviewOutput, error) {
+// its own connection via openRepoStore. Pure read, on purpose: it has
+// no "resolve" argument, matching this project's own established
+// "decisions stay CLI-only, never exposed via MCP" precedent ("sign
+// --confirmed", "promote") - resolving a dead-letter row is "conjecture
+// queue review --resolve <row-id>" only.
+func queueReviewTool(_ context.Context, _ *mcp.CallToolRequest, args queueReviewArgs) (*mcp.CallToolResult, queueReviewOutput, error) {
 	db, err := openRepoStore()
 	if err != nil {
 		return nil, queueReviewOutput{}, err
@@ -239,7 +252,7 @@ func queueReviewTool(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mc
 	if err := workqueue.EnsureDeadLetterSchema(db); err != nil {
 		return nil, queueReviewOutput{}, err
 	}
-	items, err := workqueue.ListDeadLetter(db)
+	items, err := workqueue.ListDeadLetter(db, args.All)
 	if err != nil {
 		return nil, queueReviewOutput{}, err
 	}
@@ -247,8 +260,9 @@ func queueReviewTool(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mc
 	out := make([]DeadLetterItemOut, len(items))
 	for i, it := range items {
 		out[i] = DeadLetterItemOut{
-			ID: it.ID, Tier: tierString(it.Tier), Weight: it.Weight,
+			RowID: it.RowID, ID: it.ID, Tier: tierString(it.Tier), Weight: it.Weight,
 			Severity: it.Severity, Reason: it.Reason, Queued: it.CreatedAt.Format(time.RFC3339),
+			Resolved: !it.ResolvedAt.IsZero(),
 		}
 	}
 

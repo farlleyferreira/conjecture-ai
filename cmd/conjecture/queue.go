@@ -16,7 +16,7 @@ import (
 const queueUsage = "usage: conjecture queue add <id> <blocker|current-task|background> [--weight <N>] [--severity <N>]\n" +
 	"       conjecture queue list [--area <area>] [--phenomenon <phenomenon>]\n" +
 	"       conjecture queue next\n" +
-	"       conjecture queue review"
+	"       conjecture queue review [--all] [--resolve <row-id>]"
 
 // queueAgingRate and queueAgingUnit are this CLI's own default aging
 // parameters for [workqueue.Next]/[workqueue.Pop]: +1.0 effective
@@ -221,12 +221,14 @@ type QueueItemOut struct {
 // facing shape - the same fields, rendered the same way
 // [printDeadLetter] already renders them for the CLI.
 type DeadLetterItemOut struct {
+	RowID    int64  `json:"row_id"`
 	ID       string `json:"id"`
 	Tier     string `json:"tier"`
 	Weight   int    `json:"weight"`
 	Severity int    `json:"severity"`
 	Reason   string `json:"reason"`
 	Queued   string `json:"queued"`
+	Resolved bool   `json:"resolved"`
 }
 
 // queueScaleWarningMultiplier is how far above this project's own
@@ -438,18 +440,47 @@ func popNext(db *sql.DB, stdout io.Writer) int {
 	return 0
 }
 
-// runQueueReview implements "conjecture queue review": lists every
-// item "conjecture work" has ever moved to the dead letter
-// (workqueue.AddDeadLetter, work.go) - deterministically unresolvable
-// by its own disposable implementing oracle, and so never picked up
-// automatically again. This is this capability's own read surface for
-// that: a human decides what to do with each one directly (fix the
-// hypothesis's own declared domain, implement it by hand, anything
-// else) - "conjecture queue review" itself never removes or resolves
-// anything, only reports.
+// runQueueReview implements "conjecture queue review": by default,
+// lists every unresolved item "conjecture work" has ever moved to the
+// dead letter (workqueue.AddDeadLetter, work.go) - deterministically
+// unresolvable by its own disposable implementing oracle, and so never
+// picked up automatically again. A human decides what to do with each
+// one directly (fix the hypothesis's own declared domain, implement it
+// by hand, anything else), then runs "--resolve <row-id>" (the row id
+// this same listing prints) to mark it handled, so it stops showing up
+// here; "--all" also lists already-resolved rows, as an audit trail.
+// Resolving is this command's one piece of state-changing behavior -
+// the queue_review MCP tool stays pure read, matching this project's
+// own established "decisions stay CLI-only, never exposed via MCP"
+// precedent ("conjecture sign --confirmed", "conjecture promote").
 func runQueueReview(args []string, stdout, stderr io.Writer) int {
-	if len(args) != 0 {
-		_, _ = fmt.Fprintln(stderr, queueUsage)
+	var resolveRowID int64
+	resolve := false
+	all := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--resolve":
+			i++
+			if i >= len(args) {
+				_, _ = fmt.Fprintln(stderr, queueUsage)
+				return 1
+			}
+			n, err := strconv.ParseInt(args[i], 10, 64)
+			if err != nil {
+				_, _ = fmt.Fprintf(stderr, "conjecture: --resolve wants the dead letter's own row id (an integer), got %q\n", args[i])
+				return 1
+			}
+			resolveRowID = n
+			resolve = true
+		case "--all":
+			all = true
+		default:
+			_, _ = fmt.Fprintln(stderr, queueUsage)
+			return 1
+		}
+	}
+	if resolve && all {
+		_, _ = fmt.Fprintln(stderr, "conjecture: --resolve and --all are not used together")
 		return 1
 	}
 
@@ -464,7 +495,16 @@ func runQueueReview(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	items, err := workqueue.ListDeadLetter(db)
+	if resolve {
+		if err := workqueue.ResolveDeadLetter(db, resolveRowID); err != nil {
+			_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+			return 1
+		}
+		_, _ = fmt.Fprintf(stdout, "#%d: resolved\n", resolveRowID)
+		return 0
+	}
+
+	items, err := workqueue.ListDeadLetter(db, all)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
@@ -474,15 +514,21 @@ func runQueueReview(args []string, stdout, stderr io.Writer) int {
 }
 
 // printDeadLetter renders items the same plain, one-line-per-fact way
-// every other command in this codebase reports to stdout.
+// every other command in this codebase reports to stdout. Each line
+// leads with the row id "--resolve" takes, since that is the only way
+// to target one specific occurrence.
 func printDeadLetter(stdout io.Writer, items []workqueue.DeadLetterItem) {
 	if len(items) == 0 {
 		_, _ = fmt.Fprintln(stdout, "dead letter is empty")
 		return
 	}
 	for _, it := range items {
-		_, _ = fmt.Fprintf(stdout, "%s: %s, weight %d, severity %d, reason: %s, queued %s\n",
-			it.ID, tierString(it.Tier), it.Weight, it.Severity, it.Reason, it.CreatedAt.Format(time.RFC3339))
+		resolved := ""
+		if !it.ResolvedAt.IsZero() {
+			resolved = ", resolved " + it.ResolvedAt.Format(time.RFC3339)
+		}
+		_, _ = fmt.Fprintf(stdout, "#%d %s: %s, weight %d, severity %d, reason: %s, queued %s%s\n",
+			it.RowID, it.ID, tierString(it.Tier), it.Weight, it.Severity, it.Reason, it.CreatedAt.Format(time.RFC3339), resolved)
 	}
 }
 

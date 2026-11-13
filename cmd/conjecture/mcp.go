@@ -177,7 +177,7 @@ func newMCPServer(db *sql.DB) *mcp.Server {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "queue_review",
-		Description: "Read every item \"conjecture work\" has ever moved to the dead letter - a hypothesis or law its own disposable implementing oracle refused outright (an unbounded input domain), never automatically picked up again. The same listing \"conjecture queue review\" prints from the CLI. Pure read; it never resolves or removes anything - a human decides what to do with each one.",
+		Description: "Read every unresolved item \"conjecture work\" has ever moved to the dead letter - a hypothesis or law its own disposable implementing oracle refused outright (an unbounded input domain), never automatically picked up again. Pass \"all\" to also include items already resolved. The same listing \"conjecture queue review\" prints from the CLI. Pure read; it never resolves or removes anything - a human decides what to do with each one and resolves it via \"conjecture queue review --resolve <row-id>\" directly, never through MCP.",
 	}, queueReviewTool)
 
 	mcp.AddTool(server, &mcp.Tool{

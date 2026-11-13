@@ -171,7 +171,7 @@ func TestWorkLoop_RefusedBlockerItemMovesToDeadLetterAndStopsRun(t *testing.T) {
 		t.Errorf("stdout = %q, want the lower-priority item never reached (the blocker halted the run)", stdout.String())
 	}
 
-	deadLetter, err := workqueue.ListDeadLetter(db)
+	deadLetter, err := workqueue.ListDeadLetter(db, false)
 	if err != nil {
 		t.Fatalf("ListDeadLetter returned unexpected error: %v", err)
 	}
@@ -229,7 +229,7 @@ func TestWorkLoop_RefusedNonBlockerItemMovesToDeadLetterAndRunContinues(t *testi
 		t.Errorf("stdout = %q, want the run to have continued and conformed the other item", stdout.String())
 	}
 
-	deadLetter, err := workqueue.ListDeadLetter(db)
+	deadLetter, err := workqueue.ListDeadLetter(db, false)
 	if err != nil {
 		t.Fatalf("ListDeadLetter returned unexpected error: %v", err)
 	}
