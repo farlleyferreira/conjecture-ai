@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/farlleyferreira/conjecture-ai/internal/contextcomposition"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/userdefinedlaws"
@@ -52,10 +53,17 @@ const mcpUsage = "usage: conjecture mcp"
 // ledger and user-defined-laws' own status table, the same stores
 // "verify" and "read_evidence" already read, aggregated into one call
 // instead of requiring an agent to already know a file's every
-// hypothesis id. Confirming a specification ("conjecture sign
-// --confirmed") and promoting it stay CLI-only, deliberately: those
-// are the human-only side of this boundary, not gaps this slice
-// leaves open. The folder-watch channel
+// hypothesis id. "context_list"/"context_resume"/"context_open"/
+// "context_origin"/"context_diff"/"context_resolve_conflict"/
+// "queue_list"/"graph_inspect" (mcp_read_tools.go) are every other
+// read this codebase's CLI already exposes with no write side effect
+// at all - confirmed one function at a time against their own real
+// implementation before being wired here (context restore, queue
+// add/next, and graph set were all confirmed to write, and stay
+// CLI-only for exactly that reason). Confirming a specification
+// ("conjecture sign --confirmed") and promoting it stay CLI-only,
+// deliberately: those are the human-only side of this boundary, not
+// gaps this slice leaves open. The folder-watch channel
 // ("conjecture watch", watch.go) and the rigor-reducing-action rule
 // ("conjecture optimize calibrate" marking a settings.cjtr file
 // unconfirmed, see optimize.go) are both wired elsewhere in this CLI
@@ -82,6 +90,10 @@ func runMCP(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if err := userdefinedlaws.EnsureSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	if err := contextcomposition.EnsureSchema(db); err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
@@ -122,6 +134,46 @@ func newMCPServer(db *sql.DB) *mcp.Server {
 		Name:        "status",
 		Description: "Read a .cjtr file's own aggregated lifecycle state: whether it is signed (and by whom), and, per declared hypothesis or user-defined law, whether it has been checked yet and what its latest evidence and (for a law) promotion status are - the same state \"conjecture status\" reports from the CLI, gathered from the file's own \"signed\" block plus the evidence ledger and user-defined-laws' own status table. This only reads; it never writes any of them.",
 	}, statusToolFor(db))
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "context_list",
+		Description: "List saved verification contexts, optionally filtered by area and/or a created-at date range - the same listing \"conjecture context list\" prints from the CLI. Pure read.",
+	}, contextListToolFor(db))
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "context_resume",
+		Description: "Resume a context by name: its latest version's own content, plus the work queue's own current highest-priority item (peeked, never popped) - the same read \"conjecture context resume\" runs from the CLI. Pure read; it does not consume the queue item it reports.",
+	}, contextResumeToolFor(db))
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "context_open",
+		Description: "Open one exact past version of a context (\"name@v<N>\"), read-only - the same read \"conjecture context open\" runs from the CLI.",
+	}, contextOpenToolFor(db))
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "context_origin",
+		Description: "Read a context's own real provenance: its source .cjtr file's \"signed\" block (user, tool, date, confirmed) together with every decision-ledger entry recorded against that exact file path - the same read \"conjecture context origin\" runs from the CLI. Pure read.",
+	}, contextOriginToolFor(db))
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "context_diff",
+		Description: "Show a real unified diff between two context versions' own stored content - the same read \"conjecture context diff\" runs from the CLI. Pure read.",
+	}, contextDiffToolFor(db))
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "context_resolve_conflict",
+		Description: "Resolve a stated conflict between two composition modes (ByReference, ByEmbedding, ByInheritance, ByView) per the precedence rule \"conjecture context resolve-conflict\" already applies from the CLI - a pure computation over the two modes given, never persisted anywhere, the same posture \"conjecture law resolve-conflict\" already takes.",
+	}, contextResolveConflictTool)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "queue_list",
+		Description: "List every item currently in the three-tier work queue, unordered - the same listing \"conjecture queue list\" prints from the CLI. Pure read; unlike \"conjecture queue next\", this never removes anything from the queue.",
+	}, queueListTool)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "graph_inspect",
+		Description: "Read a context-engine node's weight, relevance, and confidence, reported as three separate axes, each marked \"not set\" independently when never recorded - the same read \"conjecture graph inspect\" runs from the CLI. Pure read; it never sets any axis.",
+	}, graphInspectTool)
 
 	return server
 }
