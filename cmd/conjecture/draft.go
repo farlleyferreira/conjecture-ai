@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,22 @@ import (
 )
 
 const draftUsage = "usage: conjecture draft [--provider <name>] <file.cjtr> <plain-language ask>"
+
+// cjtrGrammarYAML and cjtrGrammarNotes are the one source of truth for
+// the subset of the cjtr-language grammar this codebase's own parser
+// (internal/cjtr) is actually verified to accept - embedded here and
+// in skillscaffold.go's own scaffolded skill (which substitutes them,
+// re-indented, into templates/conjecture-workflow-skill.md in place
+// of "{{CJTR_GRAMMAR_YAML}}"/"{{CJTR_GRAMMAR_NOTES}}") so the two
+// descriptions of the same grammar - one read by an LLM via this
+// prompt, the other read by an agent via the skill - cannot drift
+// apart the way two independently-worded copies already had.
+//
+//go:embed templates/cjtr-grammar.yaml
+var cjtrGrammarYAML string
+
+//go:embed templates/cjtr-grammar-notes.md
+var cjtrGrammarNotes string
 
 // draftSystemPrompt teaches the model only the subset of the cjtr-
 // language grammar this codebase's own parser (internal/cjtr) is
@@ -27,46 +44,24 @@ const draftUsage = "usage: conjecture draft [--provider <name>] <file.cjtr> <pla
 // codebase's own trust-boundary rule (llmorchestration.Allowed), not
 // just a style preference, since draftContent below also enforces it
 // structurally regardless of what the model actually does.
-const draftSystemPrompt = `You draft a .cjtr specification file from a plain-language request. Output ONLY the YAML document - no markdown code fences, no commentary before or after it.
+//
+// The grammar description itself (cjtrGrammarYAML/cjtrGrammarNotes)
+// is built once, from the same embedded files the scaffolded skill
+// reads - see their own doc comment above for why.
+var draftSystemPrompt = fmt.Sprintf(`You draft a .cjtr specification file from a plain-language request. Output ONLY the YAML document - no markdown code fences, no commentary before or after it.
 
 Use exactly this structure (omit a section if it doesn't apply):
 
-conjecture: 1.0.0
+%s
 
-phenomenon: <short name>
-description: "<one sentence>"
-
-concepts:
-  <concept name>:
-    variable: input.<name> OR output.<name>
-    type: decimal OR text
-    # optional: range: {min: X, max: Y}   (decimal only)
-    # optional: one_of: [a, b, c]          (text only)
-  <another concept, a fixed value instead of a variable>:
-    value: 100.00
-
-rules:
-  <rule name>:
-    id: <kebab-case-id>
-    hypotheses:
-      <hypothesis name>:
-        id: <kebab-case-id>
-        given:
-          - the <concept> <comparator> <value or concept>
-        then: the <concept> <comparator> <value or concept>
-        otherwise: the <concept> <comparator> <value or concept>
-        examples:
-          - {<concept>: <value>, <concept>: <value>, ...}
-
-A hypothesis with no "given" condition (always true) uses "always:" instead of "given"/"then"/"otherwise".
-
-The only recognized comparators are: is / equals, is not / does not equal, is greater than, is less than, is at least, is at most, is between X and Y, is strictly between X and Y, is one of [...].
-
-Every hypothesis should carry at least one example under "examples" showing concrete values consistent with its given/then.
+%s
 
 If something about the request is genuinely unclear or undecided, write ??? at that exact point rather than inventing an assumption - a human will resolve it later.
 
-Do not include a "signed" block. Whether a specification is confirmed is a decision for a human, never for you.`
+Do not include a "signed" block. Whether a specification is confirmed is a decision for a human, never for you.`,
+	strings.TrimRight(cjtrGrammarYAML, "\n"),
+	strings.TrimRight(cjtrGrammarNotes, "\n"),
+)
 
 // runDraft implements "conjecture draft [--provider <name>]
 // <file.cjtr> <ask>" - llm-orchestration's drafting side: a plain-

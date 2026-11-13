@@ -16,34 +16,10 @@ Specify a behavior precisely with the user, then prove the real implementation m
 2. **Draft the specification with the user, in the chat - not with a separate tool call.** Write or edit the `.cjtr` file directly (your own file-editing ability), at `conjecture/phenomena/<area>/<phenomenon>.cjtr`. Use this grammar:
 
    ```yaml
-   conjecture: 1.0.0
-   phenomenon: <short name>
-   description: "<one sentence>"
-
-   concepts:
-     <concept name>:
-       variable: input.<name> OR output.<name>
-       type: decimal OR text
-       # optional: range: {min: X, max: Y}   (decimal only)
-       # optional: one_of: [a, b, c]          (text only)
-     <another concept>:
-       value: 100.00   # a fixed value instead of a variable
-
-   rules:
-     <rule name>:
-       id: <kebab-case-id>
-       hypotheses:
-         <hypothesis name>:
-           id: <kebab-case-id>
-           given:
-             - the <concept> <comparator> <value or concept>
-           then: the <concept> <comparator> <value or concept>
-           otherwise: the <concept> <comparator> <value or concept>
-           examples:
-             - {<concept>: <value>, <concept>: <value>}
+{{CJTR_GRAMMAR_YAML}}
    ```
 
-   A hypothesis with no condition (always true) uses `always:` instead of `given`/`then`/`otherwise`. Comparators: `is`/`equals`, `is not`, `is greater than`, `is less than`, `is at least`, `is at most`, `is between X and Y`, `is strictly between X and Y`, `is one of [...]`. Every hypothesis needs at least one worked example. Write `???` at any point that is genuinely unclear rather than inventing an assumption - resolve it with the user instead.
+{{CJTR_GRAMMAR_NOTES}}
 
    Never write a `signed:` block yourself - see step 4.
 

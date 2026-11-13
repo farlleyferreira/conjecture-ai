@@ -1,0 +1,26 @@
+conjecture: 1.0.0
+
+phenomenon: <short name>
+description: "<one sentence>"
+
+concepts:
+  <concept name>:
+    variable: input.<name> OR output.<name>
+    type: decimal OR text
+    # optional: range: {min: X, max: Y}   (decimal only)
+    # optional: one_of: [a, b, c]          (text only)
+  <another concept, a fixed value instead of a variable>:
+    value: 100.00
+
+rules:
+  <rule name>:
+    id: <kebab-case-id>
+    hypotheses:
+      <hypothesis name>:
+        id: <kebab-case-id>
+        given:
+          - the <concept> <comparator> <value or concept>
+        then: the <concept> <comparator> <value or concept>
+        otherwise: the <concept> <comparator> <value or concept>
+        examples:
+          - {<concept>: <value>, <concept>: <value>, ...}
