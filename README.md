@@ -24,65 +24,56 @@ código. Ele sempre observa o que o código realmente faz.
 
 ## Diga uma vez, em palavras simples
 
-Aqui está uma regra de negócio real: *"pedidos acima de $100 têm frete
-grátis, exceto se for um pedido de assinatura."* Normalmente a única forma
-de saber se seu código realmente faz isso é ler o código, ou escrever um
-teste unitário na mão e esperar ter pensado nos casos certos.
+Aqui está uma política real de companhia aérea: *"passagens Economy Flex
+remarcadas com pelo menos 24 horas de antecedência não pagam taxa; o
+resto paga."* Normalmente a única forma de saber se seu código realmente
+faz isso é ler o código, ou escrever um teste unitário na mão e esperar
+ter pensado nos casos certos.
 
 ```yaml
-# conjecture/phenomena/checkout/shipping.cjtr
+# conjecture/phenomena/ticketing/ticket-change-fee.cjtr
 conjecture: 1.0.0
 
-phenomenon: shipping
+phenomenon: ticket-change-fee
 
 concepts:
-  discounted subtotal: {variable: input.discounted_subtotal, type: decimal}
-  order type: {variable: input.order_type, one_of: [regular, subscription]}
-  shipping fee: {variable: output.shipping_fee, type: decimal}
-  free shipping threshold: {value: 100.00}
+  hours before departure: {variable: input.hours_before_departure, type: decimal}
+  fare class: {variable: input.fare_class, one_of: [economy-basic, economy-flex]}
+  change fee: {variable: output.change_fee, type: decimal}
+  free change window: {value: 24.00}
 
 rules:
-  shipping is free above the threshold:
-    id: free-above
+  flex fares waive the fee inside the window:
+    id: flex-fee-waiver
     hypotheses:
-      above the threshold shipping is free:
-        id: above-threshold
+      flex fare inside window is free:
+        id: flex-inside-window
         given:
-          - the discounted subtotal is greater than the free shipping threshold
-          - the order type is not subscription
-        then: the shipping fee is 0.00
-        otherwise: the shipping fee is at least 5.00
+          - the fare class is economy-flex
+          - the hours before departure is at least the free change window
+        then: the change fee is 0.00
+        otherwise: the change fee is at least 75.00
         examples:
-          - {discounted subtotal: 150.00, order type: regular, shipping fee: 0.00}
-          - {discounted subtotal: 50.00, order type: regular, shipping fee: 7.50}
-          - {discounted subtotal: 150.00, order type: subscription, shipping fee: 7.50}
+          - {hours before departure: 30.00, fare class: economy-flex, change fee: 0.00}
+          - {hours before departure: 10.00, fare class: economy-flex, change fee: 150.00}
+          - {hours before departure: 30.00, fare class: economy-basic, change fee: 150.00}
 ```
 
 Só isso. Sem código. Só a regra, em palavras que até alguém que não
 programa conseguiria ler em voz alta.
 
-## O que o `conjecture` também faz, a partir desse um loop
-
-- Pede a um LLM pra **rascunhar** a regra pra você, ou pra **escrever/
-  corrigir** a implementação até ela ficar conforme.
-- Executa **ataques** adversariais de LLM (um por vez, ou um swarm inteiro)
-  que tentam ativamente achar um caso em que a regra quebre.
-- **Promove** uma regra por uma escada de maturidade - Hypothesis → Thesis
-  → Theory → Law - conforme evidência real se acumula.
-- Registra toda decisão humana pelo caminho (quem assinou, quem promoveu,
-  quando) num ledger local à prova de adulteração - nunca só impresso num
-  terminal e esquecido.
-
 ## Veja ele pegar um bug real
 
-Aqui está uma "implementação" com um bug real: ela cobra $7.50 de frete,
-não importa o quê.
+Aqui está uma "implementação" com um bug real: ela esquece de checar a
+classe da tarifa e só olha quantas horas faltam.
 
 ```python
 # adapter.py
 import json
 data = json.load(open("conjecture_input.json"))
-json.dump({"output.shipping_fee": "7.50"}, open("conjecture_output.json", "w"))
+hours = float(data["input.hours_before_departure"])
+fee = "0.00" if hours >= 24.00 else "150.00"
+json.dump({"output.change_fee": fee}, open("conjecture_output.json", "w"))
 ```
 
 ```dockerfile
@@ -92,40 +83,67 @@ COPY adapter.py /work/adapter.py
 ```
 
 ```
-$ podman build -t shipping-demo:latest .
-$ conjecture check conjecture/phenomena/checkout/shipping.cjtr shipping-demo:latest python3 /work/adapter.py
-checkout::shipping::free-above: above the threshold shipping is free: judge: accepted
-checkout::shipping::free-above: above the threshold shipping is free: conformance (directed sampling): non-conformant
-checkout::shipping::free-above: above the threshold shipping is free:   counterexample: map[input.discounted_subtotal:150.00 input.order_type:regular output.shipping_fee:0.00]
+$ podman build -t ticket-fee-demo:latest .
+$ conjecture check conjecture/phenomena/ticketing/ticket-change-fee.cjtr ticket-fee-demo:latest python3 /work/adapter.py
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: judge: accepted
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: conformance (directed sampling): non-conformant
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free:   counterexample: map[input.fare_class:economy-basic input.hours_before_departure:30.00 output.change_fee:0.00]
 ```
 
-Pego de verdade - um pedido regular de $150 devia ter frete grátis, e essa
-implementação nunca faz isso. Corrija o bug de verdade:
+Pego de verdade - uma passagem Economy Basic remarcada com 30 horas de
+antecedência devia pagar a taxa, e essa implementação dispensa a taxa só
+porque sobraram horas suficientes. Corrija o bug de verdade:
 
 ```python
 # adapter.py
 import json
-from decimal import Decimal
-
 data = json.load(open("conjecture_input.json"))
-subtotal = Decimal(data["input.discounted_subtotal"])
-order_type = data["input.order_type"]
-
-fee = Decimal("0.00") if subtotal > Decimal("100.00") and order_type != "subscription" else Decimal("7.50")
-json.dump({"output.shipping_fee": str(fee)}, open("conjecture_output.json", "w"))
+hours = float(data["input.hours_before_departure"])
+fare_class = data["input.fare_class"]
+fee = "0.00" if (fare_class == "economy-flex" and hours >= 24.00) else "150.00"
+json.dump({"output.change_fee": fee}, open("conjecture_output.json", "w"))
 ```
 
 ```
-$ podman build -t shipping-demo:latest .
-$ conjecture check conjecture/phenomena/checkout/shipping.cjtr shipping-demo:latest python3 /work/adapter.py
-checkout::shipping::free-above: above the threshold shipping is free: judge: accepted
-checkout::shipping::free-above: above the threshold shipping is free: conformance (directed sampling): conformant
+$ podman build -t ticket-fee-demo:latest .
+$ conjecture check conjecture/phenomena/ticketing/ticket-change-fee.cjtr ticket-fee-demo:latest python3 /work/adapter.py
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: judge: accepted
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: conformance (directed sampling): conformant
 
-$ conjecture sign --user alice --confirmed conjecture/phenomena/checkout/shipping.cjtr
+$ conjecture sign --user alice --confirmed conjecture/phenomena/ticketing/ticket-change-fee.cjtr
 ```
 
 Escreva a regra uma vez, aponte pro código real, receba um veredito real -
 e um registro assinado e atribuível de que um humano olhou pra isso.
+
+## Por que o `conjecture`
+
+- **Uma spec assinada congela antes do código ser julgado.** Depois que
+  você assina um arquivo `.cjtr`, o juiz checa a implementação só contra
+  essa regra exata e congelada - nada muda o gol de lugar no meio do
+  jogo.
+- **O modelo que escreve o código nunca corrige a própria prova.** Rascunho
+  e implementação sempre rodam em sessões separadas. Nenhuma das duas
+  consegue ver os casos ocultos que o juiz usa, chamar o juiz direto, ou
+  assinar algo em seu nome.
+- **Um modelo independente tenta ativamente quebrar sua regra.** Um SLM
+  adversarial local por padrão, ou um swarm inteiro deles rodando em
+  paralelo sem se coordenar ou debater entre si - caçando o contraexemplo
+  que você não pensou.
+- **Evidência se acumula - não é só pass/fail.** Uma regra sobe uma
+  escada real de maturidade (Hypothesis → Thesis → Theory → Law), e o
+  `conjecture` procura quatro tipos específicos de lacuna na spec antes
+  que elas se tornem comportamento faltando no código em produção.
+- **Todo contexto de verificação é versionado e retomável.** Liste,
+  reabra uma versão passada exata, compare duas versões, ou restaure uma
+  - nada de onde você parou precisa ser reconstruído de memória.
+- **Funciona com a linguagem que você já tem.** O `conjecture` observa seu
+  programa real só através de um contrato declarado de entrada/saída,
+  nunca entendendo a semântica da sua linguagem.
+- **Auto-ajuste fica sempre na coleira.** As únicas coisas que o
+  `conjecture` pode otimizar sobre si mesmo - geração de entrada,
+  orçamento do swarm, calibração - todas exigem seu `--approved` explícito
+  antes de qualquer mudança.
 
 ## Começo rápido
 
@@ -214,7 +232,18 @@ todo o exemplo prático acima, do início ao fim.
 Rode qualquer comando sem argumentos (ou qualquer bobagem no formato
 `--help`) pra ver sua própria string de uso real.
 
-## Pra que isso *não* serve
+<details>
+<summary><strong>Escopo e limites</strong> - leia antes de confiar nisso pra algo que importa</summary>
+
+O núcleo de verificação (check → attack/swarm → promote, execução em
+sandbox, o ledger de decisões, o conjunto completo de comandos de
+composição de contexto) está implementado e já foi rodado de verdade:
+contra um solver de restrições real (z3), um LLM local real
+(llama.cpp/Ollama), uma biblioteca de terceiros genuína e real
+(python-slugify - isso achou e corrigiu um bug real neste repositório), e
+verificação real de isolamento de rede.
+
+Pra que isso não serve, de propósito:
 
 - **Não é um framework de testes genérico.** Ele só checa se uma
   implementação em execução corresponde a uma regra que você escreveu na
@@ -228,10 +257,6 @@ Rode qualquer comando sem argumentos (ou qualquer bobagem no formato
   enumerável recebe o nível de rigor de "prova completa" deste código - a
   maioria dos checks é evidência forte, não uma garantia matemática pra
   toda entrada possível.
-- **Ainda não é uma ferramenta de teste de GUI/UI.** Existe um backend
-  real de acessibilidade pra Windows e Linux, mas nada na gramática
-  `.cjtr` consegue apontar pra uma GUI - é inalcançável a partir do fluxo
-  real da CLI hoje.
 - **Não é um produto de sandboxing/segurança.** A sandbox bloqueia acesso
   de rede de saída e nada mais - sem hardening de filesystem ou de
   recursos. Não aponte pra código em que você já não confia pra rodar na
@@ -239,21 +264,12 @@ Rode qualquer comando sem argumentos (ou qualquer bobagem no formato
 - **Não é um analisador estático pra um codebase inteiro.** `deps check`
   é um checker estreito de imports proibidos pra um arquivo Go por vez,
   não um linter.
-- **Não tem histórico de produção ainda.** Este é um projeto experimental,
+- **Ainda não tem histórico de produção.** Este é um projeto experimental,
   construído majoritariamente numa única sessão longa. Ninguém ainda usou
   pra tomar uma decisão real sobre código real do qual dependa - esse é o
-  próximo teste real, não algo que já ficou atrás.
+  próximo teste real.
 
-## Status
-
-O núcleo de verificação (check → attack/swarm → promote, execução em
-sandbox, o ledger de decisões, o conjunto completo de comandos de
-composição de contexto) está implementado e já foi rodado de verdade:
-contra um solver de restrições real (z3), um LLM local real
-(llama.cpp/Ollama), uma biblioteca de terceiros genuína e real
-(python-slugify - isso achou e corrigiu um bug real neste repositório), e
-verificação real de isolamento de rede. Duas coisas pra saber antes de
-confiar nisso:
+Mais duas coisas específicas pra saber:
 
 - **O driver de acessibilidade de GUI tem backends reais pra Windows (UI
   Automation) e Linux (AT-SPI), mas a gramática `.cjtr` ainda não tem como
@@ -265,6 +281,8 @@ confiar nisso:
   `conjecture/materializations/` existe depois do `conjecture init`, mas
   nada escreve nada lá ainda) está explicitamente fora do escopo do
   trabalho de persistência feito até agora.
+
+</details>
 
 ## Licença
 
