@@ -24,65 +24,56 @@ what the code actually does.
 
 ## Say it once, in plain words
 
-Here's a real business rule: *"orders over $100 ship free, unless it's a
-subscription order."* Normally the only way to know whether your code
-actually does that is to read the code, or write a unit test by hand and
-hope you thought of the right cases.
+Here's a real airline policy: *"Economy Flex tickets changed at least 24
+hours before departure are free to change; anything else pays a change
+fee."* Normally the only way to know whether your code actually does that
+is to read the code, or write a unit test by hand and hope you thought of
+the right cases.
 
 ```yaml
-# conjecture/phenomena/checkout/shipping.cjtr
+# conjecture/phenomena/ticketing/ticket-change-fee.cjtr
 conjecture: 1.0.0
 
-phenomenon: shipping
+phenomenon: ticket-change-fee
 
 concepts:
-  discounted subtotal: {variable: input.discounted_subtotal, type: decimal}
-  order type: {variable: input.order_type, one_of: [regular, subscription]}
-  shipping fee: {variable: output.shipping_fee, type: decimal}
-  free shipping threshold: {value: 100.00}
+  hours before departure: {variable: input.hours_before_departure, type: decimal}
+  fare class: {variable: input.fare_class, one_of: [economy-basic, economy-flex]}
+  change fee: {variable: output.change_fee, type: decimal}
+  free change window: {value: 24.00}
 
 rules:
-  shipping is free above the threshold:
-    id: free-above
+  flex fares waive the fee inside the window:
+    id: flex-fee-waiver
     hypotheses:
-      above the threshold shipping is free:
-        id: above-threshold
+      flex fare inside window is free:
+        id: flex-inside-window
         given:
-          - the discounted subtotal is greater than the free shipping threshold
-          - the order type is not subscription
-        then: the shipping fee is 0.00
-        otherwise: the shipping fee is at least 5.00
+          - the fare class is economy-flex
+          - the hours before departure is at least the free change window
+        then: the change fee is 0.00
+        otherwise: the change fee is at least 75.00
         examples:
-          - {discounted subtotal: 150.00, order type: regular, shipping fee: 0.00}
-          - {discounted subtotal: 50.00, order type: regular, shipping fee: 7.50}
-          - {discounted subtotal: 150.00, order type: subscription, shipping fee: 7.50}
+          - {hours before departure: 30.00, fare class: economy-flex, change fee: 0.00}
+          - {hours before departure: 10.00, fare class: economy-flex, change fee: 150.00}
+          - {hours before departure: 30.00, fare class: economy-basic, change fee: 150.00}
 ```
 
 That's it. No code. Just the rule, in words a non-programmer could read
 out loud.
 
-## What `conjecture` also does, once that one loop exists
-
-- Asks an LLM to **draft** the rule for you, or to **write/fix** the
-  implementation until it conforms.
-- Runs adversarial LLM **attacks** (one at a time, or a whole swarm) that
-  actively try to find a case where the rule breaks.
-- **Promotes** a rule through a maturity ladder - Hypothesis → Thesis →
-  Theory → Law - as real evidence accumulates.
-- Records every human decision along the way (who signed it, who promoted
-  it, when) in a local, tamper-evident ledger - never just printed to a
-  terminal and forgotten.
-
 ## See it catch a real bug
 
-Here's an "implementation" with a real bug: it charges $7.50 shipping no
-matter what.
+Here's an "implementation" with a real bug: it forgets to check the fare
+class at all, and only looks at how many hours are left.
 
 ```python
 # adapter.py
 import json
 data = json.load(open("conjecture_input.json"))
-json.dump({"output.shipping_fee": "7.50"}, open("conjecture_output.json", "w"))
+hours = float(data["input.hours_before_departure"])
+fee = "0.00" if hours >= 24.00 else "150.00"
+json.dump({"output.change_fee": fee}, open("conjecture_output.json", "w"))
 ```
 
 ```dockerfile
@@ -92,40 +83,65 @@ COPY adapter.py /work/adapter.py
 ```
 
 ```
-$ podman build -t shipping-demo:latest .
-$ conjecture check conjecture/phenomena/checkout/shipping.cjtr shipping-demo:latest python3 /work/adapter.py
-checkout::shipping::free-above: above the threshold shipping is free: judge: accepted
-checkout::shipping::free-above: above the threshold shipping is free: conformance (directed sampling): non-conformant
-checkout::shipping::free-above: above the threshold shipping is free:   counterexample: map[input.discounted_subtotal:150.00 input.order_type:regular output.shipping_fee:0.00]
+$ podman build -t ticket-fee-demo:latest .
+$ conjecture check conjecture/phenomena/ticketing/ticket-change-fee.cjtr ticket-fee-demo:latest python3 /work/adapter.py
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: judge: accepted
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: conformance (directed sampling): non-conformant
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free:   counterexample: map[input.fare_class:economy-basic input.hours_before_departure:30.00 output.change_fee:0.00]
 ```
 
-Caught for real - a $150 regular order should ship free, and this
-implementation never does. Fix the bug for real:
+Caught for real - an Economy Basic ticket changed 30 hours out should
+still pay the fee, and this implementation waives it just because enough
+hours are left. Fix the bug for real:
 
 ```python
 # adapter.py
 import json
-from decimal import Decimal
-
 data = json.load(open("conjecture_input.json"))
-subtotal = Decimal(data["input.discounted_subtotal"])
-order_type = data["input.order_type"]
-
-fee = Decimal("0.00") if subtotal > Decimal("100.00") and order_type != "subscription" else Decimal("7.50")
-json.dump({"output.shipping_fee": str(fee)}, open("conjecture_output.json", "w"))
+hours = float(data["input.hours_before_departure"])
+fare_class = data["input.fare_class"]
+fee = "0.00" if (fare_class == "economy-flex" and hours >= 24.00) else "150.00"
+json.dump({"output.change_fee": fee}, open("conjecture_output.json", "w"))
 ```
 
 ```
-$ podman build -t shipping-demo:latest .
-$ conjecture check conjecture/phenomena/checkout/shipping.cjtr shipping-demo:latest python3 /work/adapter.py
-checkout::shipping::free-above: above the threshold shipping is free: judge: accepted
-checkout::shipping::free-above: above the threshold shipping is free: conformance (directed sampling): conformant
+$ podman build -t ticket-fee-demo:latest .
+$ conjecture check conjecture/phenomena/ticketing/ticket-change-fee.cjtr ticket-fee-demo:latest python3 /work/adapter.py
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: judge: accepted
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: conformance (directed sampling): conformant
 
-$ conjecture sign --user alice --confirmed conjecture/phenomena/checkout/shipping.cjtr
+$ conjecture sign --user alice --confirmed conjecture/phenomena/ticketing/ticket-change-fee.cjtr
 ```
 
 Write the rule once, point it at real code, get a real verdict - and a
 signed, attributable record that a human looked at it.
+
+## Why `conjecture`
+
+- **A signed spec is frozen before code is judged.** Once you sign a
+  `.cjtr` file, the judge checks implementation code only against that
+  exact frozen rule - nobody can quietly move the goalposts mid-check.
+- **The model that writes the code never grades its own homework.**
+  Drafting and implementing always run in separate sessions. Neither one
+  can see the hidden cases the judge uses, call the judge directly, or
+  sign anything on your behalf.
+- **An independent model actively tries to break your rule.** One local
+  adversarial SLM by default, or a whole swarm of them running in
+  parallel without colluding or debating - hunting for the
+  counterexample you didn't think of.
+- **Evidence accumulates - it isn't just pass/fail.** A rule climbs a
+  real maturity ladder (Hypothesis → Thesis → Theory → Law), and
+  `conjecture` checks for four specific kinds of spec gap before they
+  become missing behavior in shipped code.
+- **Every verification context is versioned and resumable.** List it,
+  reopen an exact past version, diff two versions, or restore one -
+  nothing about where you left off has to be rebuilt from memory.
+- **It works with whatever language you already have.** `conjecture`
+  observes your real program only through a declared input/output
+  contract, never by understanding your language's own semantics.
+- **Self-tuning stays on a leash.** The only things `conjecture` can
+  optimize about itself - input generation, swarm budget, calibration -
+  all require your explicit `--approved` before anything changes.
 
 ## Quick start
 
@@ -212,7 +228,17 @@ whole worked example above, start to finish.
 Run any command with no arguments (or `--help`-shaped nonsense) to see its
 own real usage string.
 
-## What this is *not* for
+<details>
+<summary><strong>Scope and limits</strong> - read before you rely on this for anything that matters</summary>
+
+The verification core (check → attack/swarm → promote, sandboxed execution,
+the decision ledger, context-composition's full command set) is implemented
+and has been run for real: against a real constraint solver (z3), a real
+local LLM (llama.cpp/Ollama), a real genuine third-party library
+(python-slugify - this actually found and fixed a real bug in this repo),
+and real network-isolation verification.
+
+What it's not, on purpose:
 
 - **Not a general test framework.** It only checks whether a running
   implementation matches a rule you've written in `.cjtr`'s own narrow
@@ -225,28 +251,17 @@ own real usage string.
   hypothesis over a fully bounded, enumerable domain gets this codebase's
   own "complete proof" rigor level - most checks are strong evidence, not
   a mathematical guarantee for every possible input.
-- **Not a GUI or UI testing tool yet.** There's a real accessibility-driver
-  backend for Windows and Linux, but nothing in the `.cjtr` grammar can
-  target a GUI - it's unreachable from the actual CLI workflow today.
 - **Not a sandboxing/security product.** The sandbox blocks outbound
   network access and nothing else - no filesystem or resource hardening.
   Don't point it at code you don't already trust to run on your machine.
 - **Not a static analyzer for a whole codebase.** `deps check` is a narrow
   forbidden-import checker for one Go file at a time, not a linter.
-- **Not something with a production track record.** This is an
+- **Not something with a production track record yet.** This is an
   experimental project, built mostly in one extended session. Nobody has
   used it yet to make a real decision about real code they depend on -
-  that's the next real test, not something already behind it.
+  that's the next real test.
 
-## Status
-
-The verification core (check → attack/swarm → promote, sandboxed execution,
-the decision ledger, context-composition's full command set) is implemented
-and has been run for real: against a real constraint solver (z3), a real
-local LLM (llama.cpp/Ollama), a real genuine third-party library
-(python-slugify - this actually found and fixed a real bug in this repo),
-and real network-isolation verification. Two things to know before relying
-on it:
+Two more specific things to know:
 
 - **The GUI-accessibility driver has real Windows (UI Automation) and Linux
   (AT-SPI) backends, but the `.cjtr` grammar has no way to declare a GUI
@@ -257,6 +272,8 @@ on it:
 - **Materialization content generation** (a `conjecture/materializations/`
   path exists after `conjecture init`, but nothing writes anything there
   yet) is explicitly out of scope of the persistence work done so far.
+
+</details>
 
 ## License
 
