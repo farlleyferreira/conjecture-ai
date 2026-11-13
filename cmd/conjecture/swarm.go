@@ -223,7 +223,7 @@ func parseStrategySpecs(flags []string) ([]strategySpec, error) {
 // itself, per "cross-family agreement SHALL be treated as a signal,
 // never as evidence by itself."
 func swarmAttack(ctx context.Context, db *sql.DB, f loadedFicha, hypothesisID string, mode attackerswarm.Mode, budget int, attackerSpecs, auditorSpecs []strategySpec, resolveRunner func(strategySpec) (attackRunner, error), stdout, stderr io.Writer) int {
-	h, compositeID, interfaceText, found := findHypothesisByID(f, hypothesisID)
+	h, compositeID, interfaceText, _, found := findHypothesisByID(f, hypothesisID)
 	if !found {
 		_, _ = fmt.Fprintf(stderr, "conjecture: no hypothesis with id %q in %s\n", hypothesisID, f.phenomenon)
 		return 1
