@@ -15,6 +15,10 @@
 //   - "WRITE", "<json>": writes <json> as conjecture_output.json
 //     verbatim, ignoring the input file - full control over the
 //     implementation's own "output" for a test, independent of input.
+//   - "ECHO_INPUT": copies conjecture_input.json's own raw bytes to
+//     conjecture_output.json verbatim - lets a test see exactly what
+//     RunHarness actually wrote as input, without the temp file still
+//     existing by the time RunHarness itself returns (it deletes it).
 package main
 
 import (
@@ -57,6 +61,17 @@ func main() {
 		os.Exit(0)
 	case len(args) >= 2 && args[len(args)-2] == "WRITE":
 		if err := os.WriteFile(filepath.Join(hostDir, "conjecture_output.json"), []byte(last), 0o644); err != nil {
+			os.Stderr.WriteString(err.Error())
+			os.Exit(1)
+		}
+		os.Exit(0)
+	case last == "ECHO_INPUT":
+		raw, err := os.ReadFile(filepath.Join(hostDir, "conjecture_input.json"))
+		if err != nil {
+			os.Stderr.WriteString(err.Error())
+			os.Exit(1)
+		}
+		if err := os.WriteFile(filepath.Join(hostDir, "conjecture_output.json"), raw, 0o644); err != nil {
 			os.Stderr.WriteString(err.Error())
 			os.Exit(1)
 		}

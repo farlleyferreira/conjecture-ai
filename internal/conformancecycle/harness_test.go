@@ -75,6 +75,33 @@ func TestRunHarness_WritesInputAndReadsOutputBack(t *testing.T) {
 	}
 }
 
+// TestRunHarness_FiltersOutputKeysOutOfTheInputFile guards against a
+// real finding (see [RunHarness]'s own doc comment): every real
+// caller's own "input" still carries the hypothesis's own worked
+// example's output value too (holding "every other concept at the
+// baseline" while it varies one input concept at a time) - that must
+// never reach InputFileName, or a sandboxed implementation could
+// trust/echo an unrecognized "output.*" key straight back and pass
+// without doing any real work.
+func TestRunHarness_FiltersOutputKeysOutOfTheInputFile(t *testing.T) {
+	sb := &sandbox.Sandbox{DockerBinary: fakeImplPath}
+	opts := testOpts(t, "ECHO_INPUT")
+
+	output, _, err := RunHarness(context.Background(), sb, opts, cjtr.Bindings{
+		"input.x":       "1",
+		"output.leaked": "the-expected-answer",
+	})
+	if err != nil {
+		t.Fatalf("RunHarness returned unexpected error: %v", err)
+	}
+	if output["input.x"] != "1" {
+		t.Errorf("output = %v, want the real input.x to have reached the sandboxed file", output)
+	}
+	if _, leaked := output["output.leaked"]; leaked {
+		t.Errorf("output = %v, want output.leaked NOT to have reached the sandboxed input file", output)
+	}
+}
+
 func TestRunHarness_CleansUpInputAndOutputFiles(t *testing.T) {
 	sb := &sandbox.Sandbox{DockerBinary: fakeImplPath}
 	opts := testOpts(t, "WRITE", `{"output.result":"1"}`)
