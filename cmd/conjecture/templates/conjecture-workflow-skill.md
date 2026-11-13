@@ -46,14 +46,17 @@ Specify a behavior precisely with the user, then prove the real implementation m
 | Tool | Reads |
 |---|---|
 | `read_evidence` | A hypothesis/law's full recorded evidence history, by composite id |
+| `project_status` | Every `.cjtr` file under `conjecture/phenomena/`, summed by signed/confirmed state and maturity stage |
 | `context_list` | Saved verification contexts, optionally filtered by area/date |
 | `context_resume` | A context's latest content, plus the current highest-priority queue item |
 | `context_open` | One exact past version of a context (`name@v<N>`) |
 | `context_origin` | A context's own real provenance: its file's signed block + recorded decisions |
 | `context_diff` | A real unified diff between two context versions |
 | `context_resolve_conflict` | Which composition mode wins a stated conflict, by the project's own precedence rule |
-| `queue_list` | Every item currently in the three-tier work queue (never removes anything) |
+| `queue_list` | A per-phenomenon summary of the work queue by default; pass `area`+`phenomenon` to drill into that one phenomenon's own raw items (never removes anything) |
 | `graph_inspect` | A context-engine node's weight/relevance/confidence axes |
+
+Before drilling into `queue_list` item-by-item for several phenomena in a row, look at the summary's own counts first and weigh that against your own remaining context budget - conjecture has no visibility into it (the MCP protocol does not expose it to the server), so only you can judge whether fetching every item is worth the context it costs.
 
 ## What you must never do through this server or by shelling out around it
 
