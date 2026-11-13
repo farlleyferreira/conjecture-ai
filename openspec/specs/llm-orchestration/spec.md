@@ -55,3 +55,16 @@ promoted, or a verdict conformant.
 - **WHEN** an LLM finishes drafting a `.cjtr` file
 - **THEN** the file's `confirmed` flag remains false until a human
   explicitly confirms it
+
+### Requirement: The built-in implementer oracle refuses an unbounded domain
+The system's own built-in implementing LLM (reachable only through its own
+dedicated command, never the agent's own integration channel) SHALL refuse
+to generate code for a hypothesis or law whose input domain cannot be fully
+or boundedly enumerated, rather than accepting a verdict reached only
+against a directed sample of it.
+
+#### Scenario: Unbounded domain refused
+- **WHEN** the built-in implementer oracle is asked to implement a
+  hypothesis or law whose input domain is not boundable
+- **THEN** the system refuses, reporting that the agent driving conjecture
+  must implement it instead

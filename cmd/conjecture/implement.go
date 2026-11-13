@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -24,6 +25,28 @@ import (
 )
 
 const implementUsage = "usage: conjecture implement [--provider <name>] [--max-rounds <N>] <file.cjtr> <rule-id> <hypothesis-id>"
+
+// ErrDomainTooComplexForOracle is returned by [runImplementLoop] (and
+// so by "conjecture implement" and "conjecture work", which shares
+// it) when a hypothesis's or law's own input domain is not boundable -
+// neither [conformancecycle.CompleteProofInputs] nor [conformancecycle.
+// BoundedProofInputs] find one, the same classification
+// [conformancecycle.CheckHypothesisWithSelectedRigor] already computes
+// for a law to pick which rigor level to *run*, reused here for a
+// different decision: whether to trust this command's own disposable,
+// single-file oracle to write an implementation at all.
+//
+// An unbounded domain is exactly where this oracle's round-by-round
+// revision is most likely to special-case a revealed counterexample
+// rather than fix the general logic - a real, disclosed risk this
+// project's own usability discussion settled on (a clean round-0/
+// round-1 pass against a small, fully-exercised domain is honest
+// corroboration; many rounds against a domain this command can never
+// fully exercise is not). Refusing here is a hard guarantee, not just
+// documentation an agent could ignore: whichever agent is actually
+// driving conjecture - never this command's own disposable oracle -
+// must implement a hypothesis or law this complex.
+var ErrDomainTooComplexForOracle = errors.New("this hypothesis/law's input domain is not boundable (complete proof and bounded proof both failed to enumerate one) - too complex to trust this command's own disposable oracle; implement it with the agent driving conjecture instead")
 
 // implementDefaultMaxRounds is this command's own default for
 // conformance-cycle's "configured maximum number of judge-to-
@@ -178,7 +201,9 @@ func runImplement(args []string, stdout, stderr io.Writer) int {
 // first Conformant result, an Inconclusive one (nothing to revise
 // against), or when maxRounds is reached - "Round and token limits":
 // "the cycle stops and reports the outcome as not conformant rather
-// than continuing indefinitely."
+// than continuing indefinitely." It returns [ErrDomainTooComplexForOracle]
+// instead of ever entering that loop at all when h's own input domain
+// is not boundable - see that error's own doc comment for why.
 //
 // Honesty note: this enforces only the round half of conformance-
 // cycle's budget, not the token half - none of this codebase's
@@ -216,6 +241,25 @@ func runImplementLoop(
 	if _, omitted := omissiondetection.CheckTypeA(rule.CompositeID+"::"+h.ID, len(cases)); omitted {
 		_, _ = fmt.Fprintf(stdout, "TYPE A OMISSION: %s has no worked example or no input concept with a declared domain to sample - nothing to implement against\n", h.Name)
 		return conformancecycle.Inconclusive, nil
+	}
+
+	// Refuse a hypothesis/law whose input domain is not boundable -
+	// see [ErrDomainTooComplexForOracle]'s own doc comment for why.
+	// Reused as a pure classifier here, independent of
+	// [CheckHypothesisWithSelectedRigor]'s own isLaw-gated rule for
+	// which rigor level actually *runs* (a different decision, about
+	// how check.go verifies an already-written implementation, not
+	// about whether this command's own disposable oracle should be
+	// trusted to write one in the first place) - this gate applies the
+	// same way to a plain hypothesis and a law.
+	if _, found, err := conformancecycle.CompleteProofInputs(h, concepts); err != nil {
+		return 0, err
+	} else if !found {
+		if _, found, err := conformancecycle.BoundedProofInputs(h, concepts); err != nil {
+			return 0, err
+		} else if !found {
+			return 0, ErrDomainTooComplexForOracle
+		}
 	}
 
 	budget := conformancecycle.Budget{MaxRounds: maxRounds, MaxTokens: math.MaxInt}

@@ -130,6 +130,34 @@ func TestWorkLoop_ExhaustsAttemptsAndLeavesItemForLaterRun(t *testing.T) {
 	}
 }
 
+func TestWorkLoop_RefusedComplexItemIsDiscardedNotRetried(t *testing.T) {
+	path := writeImplementFixtureUnboundedDomain(t)
+	root := implementFixtureRoot(path)
+
+	db := openCheckTestStore(t)
+	itemID := "demo-area::demo::result-rule::result-matches"
+	if err := workqueue.Add(db, workqueue.Item{ID: itemID, Tier: workqueue.Blocker, CreatedAt: time.Now().UTC()}); err != nil {
+		t.Fatalf("Add returned unexpected error: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	code := workLoop(context.Background(), db, &sandbox.Sandbox{DockerBinary: fakeImplementPath}, &fakeImplementerClient{}, root, 3, &stdout)
+	if code != 1 {
+		t.Errorf("workLoop = %d, want 1 (the item was refused); stdout:\n%s", code, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "too complex") {
+		t.Errorf("stdout = %q, want it to report the oracle refused the item as too complex", stdout.String())
+	}
+
+	items, err := workqueue.List(db)
+	if err != nil {
+		t.Fatalf("List returned unexpected error: %v", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("queue after workLoop = %+v, want empty (a refusal is deterministic, so the item is discarded rather than retried)", items)
+	}
+}
+
 func TestWorkLoop_MalformedItemIsReportedAndDiscarded(t *testing.T) {
 	db := openCheckTestStore(t)
 	now := time.Now().UTC()
