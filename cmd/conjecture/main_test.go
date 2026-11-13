@@ -52,3 +52,25 @@ func TestRun(t *testing.T) {
 		})
 	}
 }
+
+func TestRunRecovered_RecoversPanicAsExitCode1WithAPlainErrorLine(t *testing.T) {
+	var stderr bytes.Buffer
+	code := runRecovered(&stderr, func() int { panic("boom") })
+	if code != 1 {
+		t.Errorf("runRecovered with a panic = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "conjecture: internal error: boom") {
+		t.Errorf("stderr = %q, want a plain internal-error line, not a raw stack trace", stderr.String())
+	}
+}
+
+func TestRunRecovered_NoPanicPassesTheExitCodeThrough(t *testing.T) {
+	var stderr bytes.Buffer
+	code := runRecovered(&stderr, func() int { return 3 })
+	if code != 3 {
+		t.Errorf("runRecovered with no panic = %d, want 3 (fn's own exit code, untouched)", code)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("stderr = %q, want empty when fn does not panic", stderr.String())
+	}
+}
