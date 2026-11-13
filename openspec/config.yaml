@@ -3,8 +3,10 @@ schema: spec-driven
 context: |
   Commits and PR titles must follow Conventional Commits (see CONTRIBUTING.md).
   Versioning is Semantic Versioning; version, Git tags, GitHub Releases and
-  CHANGELOG.md are generated automatically by semantic-release from commit
-  history on merge to main. Never hand-edit the version or CHANGELOG.md.
+  CHANGELOG.md are generated automatically by release-please. Every push to
+  main updates a standing release PR; merging that PR (never a direct push
+  to main) is what actually cuts the tag/release. Never hand-edit the
+  version, CHANGELOG.md, or close a release PR without merging it.
   PRs into main merge via squash only and must pass the CI quality/security
   pipeline (commitlint, PR title check, lint/test, gitleaks, CodeQL,
   dependency review) before merge.
