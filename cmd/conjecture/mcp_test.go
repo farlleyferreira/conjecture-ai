@@ -141,6 +141,73 @@ func TestMCPCheckTool_MissingFileReportsFailure(t *testing.T) {
 	}
 }
 
+func TestMCPServer_StatusToolIsRegistered(t *testing.T) {
+	session, _ := connectMCPTestClient(t)
+
+	res, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools returned unexpected error: %v", err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name == "status" {
+			return
+		}
+	}
+	t.Errorf("ListTools = %+v, want a \"status\" tool", res.Tools)
+}
+
+func TestMCPStatusTool_ReportsAggregatedState(t *testing.T) {
+	path := writeStatusFixture(t)
+	session, db := connectMCPTestClient(t)
+
+	hypothesisID := "demo-area::demo::shipping-rule::fee-matches"
+	if _, err := evidenceledger.Append(db, evidenceledger.Evidence{
+		HypothesisID: hypothesisID, Stage: evidenceledger.Hypothesis,
+		ProducedBy: "conjecture check test", Attacked: "directed sampling",
+		Survived: "every generated case conformed", ValidityHash: []byte("x"),
+	}); err != nil {
+		t.Fatalf("evidenceledger.Append returned unexpected error: %v", err)
+	}
+
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "status",
+		Arguments: map[string]any{"path": path},
+	})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("CallTool result IsError = true, content: %+v", res.Content)
+	}
+
+	out, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want map[string]any: %+v", res.StructuredContent, res.StructuredContent)
+	}
+	if signed, _ := out["signed"].(bool); signed {
+		t.Error("status.signed = true for an unsigned fixture, want false")
+	}
+	entries, ok := out["entries"].([]any)
+	if !ok || len(entries) != 2 {
+		t.Fatalf("status.entries = %+v, want exactly 2 entries", out["entries"])
+	}
+}
+
+func TestMCPStatusTool_MissingFileReportsError(t *testing.T) {
+	session, _ := connectMCPTestClient(t)
+
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "status",
+		Arguments: map[string]any{"path": "this-file-does-not-exist.cjtr"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
+	}
+	if !res.IsError {
+		t.Error("CallTool result IsError = false for a missing file, want true")
+	}
+}
+
 func TestMCPServer_ReadEvidenceToolIsRegistered(t *testing.T) {
 	session, _ := connectMCPTestClient(t)
 

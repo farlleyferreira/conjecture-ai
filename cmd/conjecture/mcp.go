@@ -10,6 +10,7 @@ import (
 
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
+	"github.com/farlleyferreira/conjecture-ai/internal/userdefinedlaws"
 	"github.com/farlleyferreira/conjecture-ai/internal/version"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -46,10 +47,15 @@ const mcpUsage = "usage: conjecture mcp"
 // which no tool on this server does. The named-disallowed actions
 // stay enforced by omission - there is still no tool here that writes
 // evidence directly, confirms a specification, or changes a weight,
-// not a runtime check that would reject such a call. Confirming a
-// specification ("conjecture sign --confirmed") and promoting it
-// stay CLI-only, deliberately: those are the human-only side of this
-// boundary, not gaps this slice leaves open. The folder-watch channel
+// not a runtime check that would reject such a call. "status" is a
+// pure read too - the file's own "signed" block plus the evidence
+// ledger and user-defined-laws' own status table, the same stores
+// "verify" and "read_evidence" already read, aggregated into one call
+// instead of requiring an agent to already know a file's every
+// hypothesis id. Confirming a specification ("conjecture sign
+// --confirmed") and promoting it stay CLI-only, deliberately: those
+// are the human-only side of this boundary, not gaps this slice
+// leaves open. The folder-watch channel
 // ("conjecture watch", watch.go) and the rigor-reducing-action rule
 // ("conjecture optimize calibrate" marking a settings.cjtr file
 // unconfirmed, see optimize.go) are both wired elsewhere in this CLI
@@ -75,6 +81,10 @@ func runMCP(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
+	if err := userdefinedlaws.EnsureSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
 
 	server := newMCPServer(db)
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
@@ -87,8 +97,9 @@ func runMCP(args []string, stdout, stderr io.Writer) int {
 // newMCPServer builds the server every real "conjecture mcp" run
 // serves, factored out so a test can connect to it over an in-memory
 // transport instead of a real stdio subprocess. db backs the
-// "read_evidence" tool; a test supplies a temporary store instead of
-// the real per-OS one [persistence.OpenStore] would otherwise open.
+// "read_evidence" and "status" tools; a test supplies a temporary
+// store instead of the real per-OS one [persistence.OpenStore] would
+// otherwise open.
 func newMCPServer(db *sql.DB) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "conjecture", Version: version.String()}, nil)
 
@@ -106,6 +117,11 @@ func newMCPServer(db *sql.DB) *mcp.Server {
 		Name:        "check",
 		Description: "Run a hypothesis's or user-defined law's conformance cycle against a real sandboxed implementation - the same check \"conjecture check\" runs from the CLI, requesting verification and reading its result back through this channel. Requires a container runtime reachable from wherever this MCP server process runs, and an already-built image; never confirms a specification or changes a weight itself.",
 	}, checkTool)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "status",
+		Description: "Read a .cjtr file's own aggregated lifecycle state: whether it is signed (and by whom), and, per declared hypothesis or user-defined law, whether it has been checked yet and what its latest evidence and (for a law) promotion status are - the same state \"conjecture status\" reports from the CLI, gathered from the file's own \"signed\" block plus the evidence ledger and user-defined-laws' own status table. This only reads; it never writes any of them.",
+	}, statusToolFor(db))
 
 	return server
 }
@@ -238,5 +254,39 @@ func readEvidenceToolFor(db *sql.DB) func(context.Context, *mcp.CallToolRequest,
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: report.String()}},
 		}, out, nil
+	}
+}
+
+// statusArgs is "status"'s own tool input - [path] alone, the one
+// argument "conjecture status" itself takes from the CLI.
+type statusArgs struct {
+	Path string `json:"path" jsonschema:"path to the .cjtr file to report status for"`
+}
+
+// statusToolFor closes over db for the same reason
+// [readEvidenceToolFor] does: the registered tool function matches
+// [mcp.AddTool]'s own signature (no extra parameter for it to pass
+// through) while still reading from the server's own shared store -
+// [computeStatus] never opens its own connection. Its result is
+// [Status] itself: unlike "verify"/"check", there is no pass/fail
+// notion here to collapse it into, so this mirrors "read_evidence"'s
+// own raw-error passthrough instead.
+func statusToolFor(db *sql.DB) func(context.Context, *mcp.CallToolRequest, statusArgs) (*mcp.CallToolResult, Status, error) {
+	return func(_ context.Context, _ *mcp.CallToolRequest, args statusArgs) (*mcp.CallToolResult, Status, error) {
+		f, err := loadFicha(args.Path)
+		if err != nil {
+			return nil, Status{}, err
+		}
+
+		status, err := computeStatus(db, f)
+		if err != nil {
+			return nil, Status{}, err
+		}
+
+		var report bytes.Buffer
+		printStatus(&report, status)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: report.String()}},
+		}, status, nil
 	}
 }
