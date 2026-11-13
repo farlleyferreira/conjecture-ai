@@ -393,7 +393,7 @@ func TestSplitPhenomenonID(t *testing.T) {
 
 func TestContextOrigin_ReportsSignedBlockAndDecisions(t *testing.T) {
 	repoRoot := t.TempDir()
-	dir := filepath.Join(repoRoot, "phenomena", "shipping")
+	dir := filepath.Join(repoRoot, "conjecture", "phenomena", "shipping")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("MkdirAll returned unexpected error: %v", err)
 	}
@@ -434,7 +434,7 @@ func TestContextOrigin_ReportsSignedBlockAndDecisions(t *testing.T) {
 
 func TestContextOrigin_UnsignedFileAndNoDecisionsReportsHonestly(t *testing.T) {
 	repoRoot := t.TempDir()
-	dir := filepath.Join(repoRoot, "phenomena", "shipping")
+	dir := filepath.Join(repoRoot, "conjecture", "phenomena", "shipping")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("MkdirAll returned unexpected error: %v", err)
 	}

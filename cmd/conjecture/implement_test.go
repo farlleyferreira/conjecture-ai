@@ -75,7 +75,7 @@ rules:
 
 func writeImplementFixtureWithLaw(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "phenomena", "demo-area")
+	dir := filepath.Join(t.TempDir(), "conjecture", "phenomena", "demo-area")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("MkdirAll failed: %v", err)
 	}
@@ -88,7 +88,7 @@ func writeImplementFixtureWithLaw(t *testing.T) string {
 
 func writeImplementFixture(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "phenomena", "demo-area")
+	dir := filepath.Join(t.TempDir(), "conjecture", "phenomena", "demo-area")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("MkdirAll failed: %v", err)
 	}
@@ -137,7 +137,7 @@ rules:
 
 func writeImplementFixtureUnboundedDomain(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "phenomena", "demo-area")
+	dir := filepath.Join(t.TempDir(), "conjecture", "phenomena", "demo-area")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("MkdirAll failed: %v", err)
 	}

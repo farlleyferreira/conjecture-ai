@@ -18,7 +18,7 @@ func TestResolveQueueItem_FourSegments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveQueueItem returned unexpected error: %v", err)
 	}
-	wantPath := filepath.Join("/root", "phenomena", "demo-area", "demo.cjtr")
+	wantPath := filepath.Join("/root", "conjecture", "phenomena", "demo-area", "demo.cjtr")
 	if path != wantPath {
 		t.Errorf("path = %q, want %q", path, wantPath)
 	}
@@ -32,7 +32,7 @@ func TestResolveQueueItem_ThreeSegmentsIsFileLevelLaw(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveQueueItem returned unexpected error: %v", err)
 	}
-	wantPath := filepath.Join("/root", "phenomena", "demo-area", "demo.cjtr")
+	wantPath := filepath.Join("/root", "conjecture", "phenomena", "demo-area", "demo.cjtr")
 	if path != wantPath {
 		t.Errorf("path = %q, want %q", path, wantPath)
 	}
@@ -51,12 +51,13 @@ func TestResolveQueueItem_MalformedID(t *testing.T) {
 }
 
 // implementFixtureRoot returns the root directory implementFixture
-// (written by writeImplementFixture) is rooted under - three levels
-// above the .cjtr file itself (phenomena/demo-area/demo.cjtr) - so a
-// test can pass it to workLoop as root without workLoop or
-// writeImplementFixture needing to agree on it any other way.
+// (written by writeImplementFixture) is rooted under - four levels
+// above the .cjtr file itself (conjecture/phenomena/demo-area/
+// demo.cjtr - joinPhenomenonPath's own real layout) - so a test can
+// pass it to workLoop as root without workLoop or writeImplementFixture
+// needing to agree on it any other way.
 func implementFixtureRoot(path string) string {
-	return filepath.Dir(filepath.Dir(filepath.Dir(path)))
+	return filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(path))))
 }
 
 func TestWorkLoop_EmptyQueueExitsCleanly(t *testing.T) {
@@ -130,31 +131,110 @@ func TestWorkLoop_ExhaustsAttemptsAndLeavesItemForLaterRun(t *testing.T) {
 	}
 }
 
-func TestWorkLoop_RefusedComplexItemIsDiscardedNotRetried(t *testing.T) {
-	path := writeImplementFixtureUnboundedDomain(t)
-	root := implementFixtureRoot(path)
+func TestWorkLoop_RefusedBlockerItemMovesToDeadLetterAndStopsRun(t *testing.T) {
+	repoRoot := t.TempDir()
+	complexDir := filepath.Join(repoRoot, "conjecture", "phenomena", "demo-area")
+	if err := os.MkdirAll(complexDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned unexpected error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(complexDir, "demo.cjtr"), []byte(implementFixtureUnboundedDomain), 0o644); err != nil {
+		t.Fatalf("WriteFile returned unexpected error: %v", err)
+	}
+	simpleDir := filepath.Join(repoRoot, "conjecture", "phenomena", "other-area")
+	if err := os.MkdirAll(simpleDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned unexpected error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(simpleDir, "demo.cjtr"), []byte(implementFixture), 0o644); err != nil {
+		t.Fatalf("WriteFile returned unexpected error: %v", err)
+	}
 
 	db := openCheckTestStore(t)
-	itemID := "demo-area::demo::result-rule::result-matches"
-	if err := workqueue.Add(db, workqueue.Item{ID: itemID, Tier: workqueue.Blocker, CreatedAt: time.Now().UTC()}); err != nil {
+	complexID := "demo-area::demo::result-rule::result-matches"
+	simpleID := "other-area::demo::result-rule::result-matches"
+	now := time.Now().UTC()
+	if err := workqueue.Add(db, workqueue.Item{ID: complexID, Tier: workqueue.Blocker, CreatedAt: now}); err != nil {
+		t.Fatalf("Add returned unexpected error: %v", err)
+	}
+	if err := workqueue.Add(db, workqueue.Item{ID: simpleID, Tier: workqueue.Background, CreatedAt: now}); err != nil {
 		t.Fatalf("Add returned unexpected error: %v", err)
 	}
 
 	var stdout bytes.Buffer
-	code := workLoop(context.Background(), db, &sandbox.Sandbox{DockerBinary: fakeImplementPath}, &fakeImplementerClient{}, root, 3, &stdout)
+	code := workLoop(context.Background(), db, &sandbox.Sandbox{DockerBinary: fakeImplementPath}, &fakeImplementerClient{}, repoRoot, 3, &stdout)
 	if code != 1 {
-		t.Errorf("workLoop = %d, want 1 (the item was refused); stdout:\n%s", code, stdout.String())
+		t.Errorf("workLoop = %d, want 1 (a blocker item was refused); stdout:\n%s", code, stdout.String())
 	}
-	if !strings.Contains(stdout.String(), "too complex") {
-		t.Errorf("stdout = %q, want it to report the oracle refused the item as too complex", stdout.String())
+	if !strings.Contains(stdout.String(), "blocker item moved to the dead letter") {
+		t.Errorf("stdout = %q, want it to report the blocker item moved to the dead letter and the run stopping", stdout.String())
+	}
+	if strings.Contains(stdout.String(), simpleID) {
+		t.Errorf("stdout = %q, want the lower-priority item never reached (the blocker halted the run)", stdout.String())
 	}
 
-	items, err := workqueue.List(db)
+	deadLetter, err := workqueue.ListDeadLetter(db)
+	if err != nil {
+		t.Fatalf("ListDeadLetter returned unexpected error: %v", err)
+	}
+	if len(deadLetter) != 1 || deadLetter[0].ID != complexID || deadLetter[0].Tier != workqueue.Blocker {
+		t.Errorf("deadLetter = %+v, want exactly the blocker item", deadLetter)
+	}
+
+	remaining, err := workqueue.List(db)
 	if err != nil {
 		t.Fatalf("List returned unexpected error: %v", err)
 	}
-	if len(items) != 0 {
-		t.Errorf("queue after workLoop = %+v, want empty (a refusal is deterministic, so the item is discarded rather than retried)", items)
+	if len(remaining) != 1 || remaining[0].ID != simpleID {
+		t.Errorf("queue after workLoop = %+v, want the untouched lower-priority item still queued", remaining)
+	}
+}
+
+func TestWorkLoop_RefusedNonBlockerItemMovesToDeadLetterAndRunContinues(t *testing.T) {
+	t.Setenv("FAKEIMPLEMENT_SUCCEED_AFTER", "2")
+	repoRoot := t.TempDir()
+	complexDir := filepath.Join(repoRoot, "conjecture", "phenomena", "demo-area")
+	if err := os.MkdirAll(complexDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned unexpected error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(complexDir, "demo.cjtr"), []byte(implementFixtureUnboundedDomain), 0o644); err != nil {
+		t.Fatalf("WriteFile returned unexpected error: %v", err)
+	}
+	simpleDir := filepath.Join(repoRoot, "conjecture", "phenomena", "other-area")
+	if err := os.MkdirAll(simpleDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll returned unexpected error: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(simpleDir, "demo.cjtr"), []byte(implementFixture), 0o644); err != nil {
+		t.Fatalf("WriteFile returned unexpected error: %v", err)
+	}
+
+	db := openCheckTestStore(t)
+	complexID := "demo-area::demo::result-rule::result-matches"
+	simpleID := "other-area::demo::result-rule::result-matches"
+	now := time.Now().UTC()
+	if err := workqueue.Add(db, workqueue.Item{ID: complexID, Tier: workqueue.Background, CreatedAt: now}); err != nil {
+		t.Fatalf("Add returned unexpected error: %v", err)
+	}
+	if err := workqueue.Add(db, workqueue.Item{ID: simpleID, Tier: workqueue.CurrentTask, CreatedAt: now}); err != nil {
+		t.Fatalf("Add returned unexpected error: %v", err)
+	}
+
+	var stdout bytes.Buffer
+	code := workLoop(context.Background(), db, &sandbox.Sandbox{DockerBinary: fakeImplementPath}, &fakeImplementerClient{}, repoRoot, 3, &stdout)
+	if code != 1 {
+		t.Errorf("workLoop = %d, want 1 (a non-blocker item was refused); stdout:\n%s", code, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), complexID+": moved to the dead letter") {
+		t.Errorf("stdout = %q, want the non-blocker item reported as moved to the dead letter", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), simpleID+": conformant") {
+		t.Errorf("stdout = %q, want the run to have continued and conformed the other item", stdout.String())
+	}
+
+	deadLetter, err := workqueue.ListDeadLetter(db)
+	if err != nil {
+		t.Fatalf("ListDeadLetter returned unexpected error: %v", err)
+	}
+	if len(deadLetter) != 1 || deadLetter[0].ID != complexID || deadLetter[0].Tier != workqueue.Background {
+		t.Errorf("deadLetter = %+v, want exactly the non-blocker item", deadLetter)
 	}
 }
 
@@ -219,7 +299,7 @@ rules:
 
 func writeImplementFixtureWithFileLevelLaw(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "phenomena", "demo-area")
+	dir := filepath.Join(t.TempDir(), "conjecture", "phenomena", "demo-area")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("MkdirAll failed: %v", err)
 	}

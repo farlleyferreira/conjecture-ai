@@ -329,6 +329,57 @@ func TestMCPQueueListTool_PhenomenonWithoutAreaIsError(t *testing.T) {
 	}
 }
 
+func TestMCPServer_QueueReviewToolIsRegistered(t *testing.T) {
+	session, _ := connectMCPTestClient(t)
+
+	res, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools returned unexpected error: %v", err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name == "queue_review" {
+			return
+		}
+	}
+	t.Errorf("ListTools = %+v, want a \"queue_review\" tool", res.Tools)
+}
+
+func TestMCPQueueReviewTool_ReportsDeadLetteredItems(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	session, _ := connectMCPTestClient(t)
+
+	queueDB, err := persistence.OpenStore(".")
+	if err != nil {
+		t.Fatalf("OpenStore returned unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = queueDB.Close() })
+	if err := workqueue.EnsureDeadLetterSchema(queueDB); err != nil {
+		t.Fatalf("EnsureDeadLetterSchema returned unexpected error: %v", err)
+	}
+	if err := workqueue.AddDeadLetter(queueDB, workqueue.DeadLetterItem{
+		ID: "demo-area::demo::rule::hyp", Tier: workqueue.Blocker, Weight: 1,
+		Reason: "domain not boundable", CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("AddDeadLetter returned unexpected error: %v", err)
+	}
+
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "queue_review", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("CallTool returned unexpected error: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("CallTool result IsError = true, content: %+v", res.Content)
+	}
+	out, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("StructuredContent = %T, want map[string]any: %+v", res.StructuredContent, res.StructuredContent)
+	}
+	items, ok := out["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("items = %+v, want exactly 1", out["items"])
+	}
+}
+
 func TestMCPGraphInspectTool_ReportsSeededAxis(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	session, _ := connectMCPTestClient(t)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -217,6 +218,45 @@ func queueListTool(_ context.Context, _ *mcp.CallToolRequest, args queueListArgs
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: report.String()}},
 	}, queueListOutput{Summaries: summaries, Items: queueItems, Warning: warning}, nil
+}
+
+// queueReviewOutput is "queue_review"'s own structured result: every
+// item "conjecture work" has ever moved to the dead letter - see
+// [runQueueReview]'s own doc comment for what that means.
+type queueReviewOutput struct {
+	Items []DeadLetterItemOut `json:"items"`
+}
+
+// queueReviewTool needs no db from [newMCPServer], for the same
+// reason [queueListTool] does not - [workqueue.ListDeadLetter] opens
+// its own connection via openRepoStore.
+func queueReviewTool(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, queueReviewOutput, error) {
+	db, err := openRepoStore()
+	if err != nil {
+		return nil, queueReviewOutput{}, err
+	}
+	defer func() { _ = db.Close() }()
+	if err := workqueue.EnsureDeadLetterSchema(db); err != nil {
+		return nil, queueReviewOutput{}, err
+	}
+	items, err := workqueue.ListDeadLetter(db)
+	if err != nil {
+		return nil, queueReviewOutput{}, err
+	}
+
+	out := make([]DeadLetterItemOut, len(items))
+	for i, it := range items {
+		out[i] = DeadLetterItemOut{
+			ID: it.ID, Tier: tierString(it.Tier), Weight: it.Weight,
+			Severity: it.Severity, Reason: it.Reason, Queued: it.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	var report bytes.Buffer
+	printDeadLetter(&report, items)
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: report.String()}},
+	}, queueReviewOutput{Items: out}, nil
 }
 
 // graphInspectArgs is "graph_inspect"'s own tool input - [node-id]

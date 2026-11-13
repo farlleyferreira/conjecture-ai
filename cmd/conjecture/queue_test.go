@@ -210,6 +210,55 @@ func TestRunQueueList_PhenomenonWithoutAreaIsUsageError(t *testing.T) {
 	}
 }
 
+func TestRunQueueReview_EmptyReportsEmpty(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+
+	var stdout, stderr bytes.Buffer
+	code := runQueueReview(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runQueueReview exit code = %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "dead letter is empty") {
+		t.Errorf("stdout = %q, want it to report the dead letter is empty", stdout.String())
+	}
+}
+
+func TestRunQueueReview_ReportsDeadLetteredItems(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	db, err := persistence.OpenStore(".")
+	if err != nil {
+		t.Fatalf("OpenStore returned unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := workqueue.EnsureDeadLetterSchema(db); err != nil {
+		t.Fatalf("EnsureDeadLetterSchema returned unexpected error: %v", err)
+	}
+	if err := workqueue.AddDeadLetter(db, workqueue.DeadLetterItem{
+		ID: "demo-area::demo::rule::hyp", Tier: workqueue.Blocker, Weight: 1,
+		Reason: "domain not boundable", CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("AddDeadLetter returned unexpected error: %v", err)
+	}
+	_ = db.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := runQueueReview(nil, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runQueueReview exit code = %d, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "demo-area::demo::rule::hyp") || !strings.Contains(stdout.String(), "domain not boundable") {
+		t.Errorf("stdout = %q, want the dead-lettered item and its reason", stdout.String())
+	}
+}
+
+func TestRunQueueReview_WrongArgCountIsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runQueueReview([]string{"extra"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("runQueueReview with an arg = %d, want 1", code)
+	}
+}
+
 func TestParseTier(t *testing.T) {
 	cases := map[string]workqueue.Tier{
 		"blocker":      workqueue.Blocker,
