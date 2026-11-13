@@ -2,14 +2,53 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/farlleyferreira/conjecture-ai/internal/decisionledger"
+	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 )
+
+func openSignTestStore(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := persistence.OpenStoreAt(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatalf("OpenStoreAt returned unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func TestRecordCandidateReviewDecision_Records(t *testing.T) {
+	db := openSignTestStore(t)
+	if err := recordCandidateReviewDecision(db, "phenomena/shipping/free-shipping.cjtr", "alice"); err != nil {
+		t.Fatalf("recordCandidateReviewDecision returned unexpected error: %v", err)
+	}
+
+	decisions, err := decisionledger.List(db)
+	if err != nil {
+		t.Fatalf("decisionledger.List returned unexpected error: %v", err)
+	}
+	if len(decisions) != 1 {
+		t.Fatalf("decisionledger.List returned %d decisions, want 1", len(decisions))
+	}
+	got := decisions[0]
+	if got.Kind != "candidate-review" || got.Subject != "phenomena/shipping/free-shipping.cjtr" || got.Determination != "accepted" || got.DecidedBy != "alice" {
+		t.Errorf("recorded decision = %+v, want kind candidate-review, determination accepted, decided by alice", got)
+	}
+}
 
 func TestRunSign_SignsFileInPlace(t *testing.T) {
 	path := writeFixture(t, fixtureCjtr)
+	// --confirmed also records a real decisionledger entry against the
+	// real per-repository store (openRepoStore, keyed by the current
+	// working directory) - chdir into this test's own t.TempDir() so
+	// that touches an isolated location, not whatever directory the
+	// test binary happens to run from.
+	t.Chdir(t.TempDir())
 
 	var stdout, stderr bytes.Buffer
 	code := runSign([]string{"--user", "alice", "--confirmed", path}, &stdout, &stderr)
