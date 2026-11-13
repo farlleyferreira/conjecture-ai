@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,6 +94,55 @@ func writeImplementFixture(t *testing.T) string {
 	}
 	path := filepath.Join(dir, "demo.cjtr")
 	if err := os.WriteFile(path, []byte(implementFixture), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	return path
+}
+
+// implementFixtureUnboundedDomain declares its one input concept with
+// a "range" but no "places" - [cjtr.BoundaryValues] still returns its
+// two endpoints (so [conformancecycle.DirectedSamplingInputs] - and so
+// the Type A omission check - still has cases to work with), but
+// [cjtr.ExhaustiveValues] refuses it (a decimal range needs a declared
+// step to enumerate "every value" of, not just its boundary): neither
+// [conformancecycle.CompleteProofInputs] nor [conformancecycle.
+// BoundedProofInputs] finds a boundable domain here. This is the
+// fixture [TestRunImplementLoop_RefusesUnboundedDomain] (and
+// work_test.go's own equivalent) uses to exercise
+// [ErrDomainTooComplexForOracle].
+const implementFixtureUnboundedDomain = `
+conjecture: 1.0.0
+
+phenomenon: demo implement unbounded
+
+concepts:
+  amount:
+    variable: input.amount
+    type: decimal
+    range: {min: 0.00, max: 1000.00}
+  result:
+    variable: output.result
+    type: decimal
+
+rules:
+  result rule:
+    id: result-rule
+    hypotheses:
+      result matches:
+        id: result-matches
+        always: the result is 7.50
+        examples:
+          - {amount: 10.00, result: 7.50}
+`
+
+func writeImplementFixtureUnboundedDomain(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "phenomena", "demo-area")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	path := filepath.Join(dir, "demo.cjtr")
+	if err := os.WriteFile(path, []byte(implementFixtureUnboundedDomain), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)
 	}
 	return path
@@ -280,6 +330,38 @@ func TestRunImplementLoop_NoBoundedInputIsTypeAOmission(t *testing.T) {
 	}
 	if len(client.prompts) != 0 {
 		t.Errorf("len(client.prompts) = %d, want 0 (the implementer should never be asked for code with nothing to test it against)", len(client.prompts))
+	}
+}
+
+func TestRunImplementLoop_RefusesUnboundedDomain(t *testing.T) {
+	path := writeImplementFixtureUnboundedDomain(t)
+	f, err := loadFicha(path)
+	if err != nil {
+		t.Fatalf("loadFicha returned unexpected error: %v", err)
+	}
+	rule, h, isLaw, err := findHypothesis(f, "result-rule", "result-matches")
+	if err != nil {
+		t.Fatalf("findHypothesis returned unexpected error: %v", err)
+	}
+
+	db := openCheckTestStore(t)
+	client := &fakeImplementerClient{}
+	sb := &sandbox.Sandbox{DockerBinary: fakeImplementPath}
+
+	_, err = runImplementLoop(context.Background(), db, sb, client, rule, h, 3, "test-spec-version", isLaw, f.concepts, f.tables, &bytes.Buffer{})
+	if !errors.Is(err, ErrDomainTooComplexForOracle) {
+		t.Fatalf("runImplementLoop error = %v, want ErrDomainTooComplexForOracle", err)
+	}
+	if len(client.prompts) != 0 {
+		t.Errorf("len(client.prompts) = %d, want 0 (the oracle must never be asked for code against a domain it cannot be trusted on)", len(client.prompts))
+	}
+
+	history, err := evidenceledger.History(db, rule.CompositeID+"::"+h.ID)
+	if err != nil {
+		t.Fatalf("History returned unexpected error: %v", err)
+	}
+	if len(history) != 0 {
+		t.Errorf("history = %+v, want no evidence recorded for a refused hypothesis", history)
 	}
 }
 
