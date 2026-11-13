@@ -31,6 +31,39 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	return dispatch(args, stdout, stderr)
+}
+
+// dispatch routes to the named subcommand, recovering from any panic
+// inside it via [runRecovered]. A bug inside one of the 20+
+// subcommands below should never crash the whole process with a raw
+// Go stack trace on stderr - jarring for anyone who isn't the
+// developer reading it, and in a partner demo actively embarrassing.
+func dispatch(args []string, stdout, stderr io.Writer) int {
+	return runRecovered(stderr, func() int {
+		return route(args, stdout, stderr)
+	})
+}
+
+// runRecovered calls fn, converting any panic into exit code 1 and a
+// plain, single-line error on stderr - the same way every other
+// failure in this CLI already reports - instead of letting it crash
+// the process with a raw Go stack trace. It does not retry fn or
+// otherwise treat the panic as recoverable mid-command.
+func runRecovered(stderr io.Writer, fn func() int) (exitCode int) {
+	defer func() {
+		if r := recover(); r != nil {
+			_, _ = fmt.Fprintf(stderr, "conjecture: internal error: %v\n", r)
+			exitCode = 1
+		}
+	}()
+	return fn()
+}
+
+// route is dispatch's own actual command table, split out so
+// [runRecovered]'s panic handling wraps it without the switch itself
+// needing to know anything about recovery.
+func route(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "version":
 		_, _ = fmt.Fprintln(stdout, version.String())
