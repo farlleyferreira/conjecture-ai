@@ -129,6 +129,86 @@ func TestRun_TimeoutKillsContainerAndReportsTimedOut(t *testing.T) {
 	}
 }
 
+// networkProbeScript is a self-contained Python script that attempts
+// a real outbound TCP connection to a real external host (8.8.8.8,
+// a well-known, highly-available public DNS resolver, port 53), and
+// exits 0 if that attempt was refused/unreachable (the sandboxed
+// expectation), 1 if it actually connected (network isolation did
+// not hold).
+const networkProbeScript = `import socket, sys
+try:
+    socket.create_connection(("8.8.8.8", 53), timeout=5)
+    print("CONNECTED")
+    sys.exit(1)
+except OSError as e:
+    print("BLOCKED:", e)
+    sys.exit(0)
+`
+
+// TestRun_RealNetworkIsolationBlocksOutboundConnection is a real,
+// manual integration test against a real Docker/Podman daemon and
+// real outbound internet access from the host running it - never run
+// in CI (this project's own CI has neither). conformance-cycle's own
+// "Sandboxed execution with no network access" requirement - the one
+// real security property this package exists to provide - was, before
+// this test, only ever checked by [TestBuildDockerArgs_
+// NetworkNoneAndMountShape] as a string present in the constructed
+// argument list; this is the first time it is checked against an
+// actual running container attempting an actual network call,
+// confirming the real container runtime (not just this package's own
+// argument-building code) actually enforces it.
+//
+// This runs the same probe script twice: once through a *Sandbox
+// (which always applies --network none - there is no way to disable
+// it, by design) and, as a control proving the probe itself is a
+// valid test of connectivity (ruling out "this host has no internet
+// at all" producing a false-blocked result), once via the same
+// container runtime directly, with no network restriction. If the
+// control itself fails to connect, the test reports that honestly
+// rather than treating it as isolation working.
+//
+// Set CONJECTURE_SANDBOX_MANUAL_TEST=1, with a real "docker" (or a
+// "docker"-named shim to a real Podman, as this project's own README/
+// WSL setup uses) reachable on PATH, a pullable "python:3-slim"
+// image, and real outbound internet access, then run this test alone.
+func TestRun_RealNetworkIsolationBlocksOutboundConnection(t *testing.T) {
+	if os.Getenv("CONJECTURE_SANDBOX_MANUAL_TEST") == "" {
+		t.Skip("manual only - set CONJECTURE_SANDBOX_MANUAL_TEST=1 with a real docker/podman daemon and real outbound internet access from this host")
+	}
+
+	controlDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(controlDir, "probe.py"), []byte(networkProbeScript), 0o644); err != nil {
+		t.Fatalf("writing control probe script returned unexpected error: %v", err)
+	}
+	controlOut, controlErr := exec.Command("docker", "run", "--rm",
+		"-v", controlDir+":/workspace", "-w", "/workspace", "python:3-slim",
+		"python3", "probe.py",
+	).CombinedOutput()
+	if controlErr == nil {
+		t.Fatalf("control probe (no network restriction) reported BLOCKED when it should have CONNECTED - this host/image has no real outbound internet access, so this test cannot say anything about real isolation:\n%s", controlOut)
+	}
+	if !strings.Contains(string(controlOut), "CONNECTED") {
+		t.Fatalf("control probe did not report CONNECTED - cannot trust this test's own methodology:\n%s", controlOut)
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "probe.py"), []byte(networkProbeScript), 0o644); err != nil {
+		t.Fatalf("writing sandboxed probe script returned unexpected error: %v", err)
+	}
+	s := &Sandbox{}
+	result, err := s.Run(context.Background(), Options{Image: "python:3-slim", Dir: dir, Command: []string{"python3", "probe.py"}})
+	if err != nil {
+		t.Fatalf("Run returned unexpected error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("sandboxed probe exit code = %d (stdout: %q, stderr: %q), want 0 (BLOCKED) - the control probe proved this host can reach 8.8.8.8:53 with no restriction, so a sandboxed CONNECTED means --network none did not isolate this real container",
+			result.ExitCode, result.Stdout, result.Stderr)
+	}
+	if !strings.Contains(string(result.Stdout), "BLOCKED") {
+		t.Errorf("sandboxed probe stdout = %q, want it to report BLOCKED", result.Stdout)
+	}
+}
+
 func TestRun_DockerBinaryNotFoundIsError(t *testing.T) {
 	s := &Sandbox{DockerBinary: filepath.Join(t.TempDir(), "nonexistent-docker-binary")}
 	_, err := s.Run(context.Background(), Options{Image: "x", Dir: t.TempDir(), Command: []string{"echo", "hi"}})
