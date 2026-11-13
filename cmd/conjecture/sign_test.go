@@ -2,14 +2,59 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/farlleyferreira/conjecture-ai/internal/decisionledger"
+	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 )
+
+func openSignTestStore(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := persistence.OpenStoreAt(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatalf("OpenStoreAt returned unexpected error: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func TestRecordCandidateReviewDecision_Records(t *testing.T) {
+	db := openSignTestStore(t)
+	if err := recordCandidateReviewDecision(db, "phenomena/shipping/free-shipping.cjtr", "alice"); err != nil {
+		t.Fatalf("recordCandidateReviewDecision returned unexpected error: %v", err)
+	}
+
+	decisions, err := decisionledger.List(db)
+	if err != nil {
+		t.Fatalf("decisionledger.List returned unexpected error: %v", err)
+	}
+	if len(decisions) != 1 {
+		t.Fatalf("decisionledger.List returned %d decisions, want 1", len(decisions))
+	}
+	got := decisions[0]
+	if got.Kind != "candidate-review" || got.Subject != "phenomena/shipping/free-shipping.cjtr" || got.Determination != "accepted" || got.DecidedBy != "alice" {
+		t.Errorf("recorded decision = %+v, want kind candidate-review, determination accepted, decided by alice", got)
+	}
+}
 
 func TestRunSign_SignsFileInPlace(t *testing.T) {
 	path := writeFixture(t, fixtureCjtr)
+	// --confirmed also records a decisionledger entry - swap in a
+	// temporary store via the test hook rather than letting it resolve
+	// the real per-OS system path (e.g. "/var/lib/conjecture" on
+	// Linux), which this test's own process is not guaranteed to be
+	// able to create - see [openDecisionStore]'s own doc comment.
+	// runSign closes whatever openDecisionStore returns, so this opens
+	// a fresh connection to the same on-disk store each call, rather
+	// than handing back one shared *sql.DB a later Close would break.
+	storeDir := filepath.Join(t.TempDir(), "data")
+	previous := openDecisionStore
+	openDecisionStore = func() (*sql.DB, error) { return persistence.OpenStoreAt(storeDir) }
+	t.Cleanup(func() { openDecisionStore = previous })
 
 	var stdout, stderr bytes.Buffer
 	code := runSign([]string{"--user", "alice", "--confirmed", path}, &stdout, &stderr)
@@ -19,6 +64,19 @@ func TestRunSign_SignsFileInPlace(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "alice") {
 		t.Errorf("stdout should mention the signing user, got: %s", stdout.String())
+	}
+
+	verifyDB, err := persistence.OpenStoreAt(storeDir)
+	if err != nil {
+		t.Fatalf("OpenStoreAt returned unexpected error: %v", err)
+	}
+	defer func() { _ = verifyDB.Close() }()
+	decisions, err := decisionledger.List(verifyDB)
+	if err != nil {
+		t.Fatalf("decisionledger.List returned unexpected error: %v", err)
+	}
+	if len(decisions) != 1 || decisions[0].Kind != "candidate-review" {
+		t.Errorf("decisionledger.List = %+v, want one candidate-review decision", decisions)
 	}
 
 	signedContent, err := os.ReadFile(path)

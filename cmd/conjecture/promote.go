@@ -8,13 +8,14 @@ import (
 	"os"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
+	"github.com/farlleyferreira/conjecture-ai/internal/decisionledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/version"
 )
 
-const promoteUsage = "usage: conjecture promote theory <file.cjtr> [--mechanism-confirmed] [--different-family-reproduced]\n" +
-	"       conjecture promote law <file.cjtr> <hypothesis-id> [--hidden-samples-conformant] [--new-code-versions-conformant]"
+const promoteUsage = "usage: conjecture promote theory <file.cjtr> [--mechanism-confirmed] [--different-family-reproduced] [--decided-by <name>]\n" +
+	"       conjecture promote law <file.cjtr> <hypothesis-id> [--hidden-samples-conformant] [--new-code-versions-conformant] [--decided-by <name>]"
 
 // promotionProducedBy is the [evidenceledger.Evidence.ProducedBy]
 // every record this command appends carries - an administrative
@@ -58,17 +59,24 @@ func runPromote(args []string, stdout, stderr io.Writer) int {
 // runPromoteTheory parses "theory"'s own arguments and loads the real
 // file/store - the thin, real-path wrapper around [promoteTheory].
 func runPromoteTheory(args []string, stdout, stderr io.Writer) int {
-	var path string
+	var path, decidedBy string
 	var mechanismConfirmed, differentFamilyReproduced bool
 	var positional []string
-	for _, arg := range args {
-		switch arg {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "--mechanism-confirmed":
 			mechanismConfirmed = true
 		case "--different-family-reproduced":
 			differentFamilyReproduced = true
+		case "--decided-by":
+			i++
+			if i >= len(args) {
+				_, _ = fmt.Fprintln(stderr, promoteUsage)
+				return 1
+			}
+			decidedBy = args[i]
 		default:
-			positional = append(positional, arg)
+			positional = append(positional, args[i])
 		}
 	}
 	if len(positional) != 1 {
@@ -76,6 +84,15 @@ func runPromoteTheory(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	path = positional[0]
+
+	if decidedBy == "" {
+		u, err := currentOSUser()
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "conjecture: --decided-by not given and the OS user could not be determined")
+			return 1
+		}
+		decidedBy = u
+	}
 
 	f, err := loadFicha(path)
 	if err != nil {
@@ -89,7 +106,7 @@ func runPromoteTheory(args []string, stdout, stderr io.Writer) int {
 	}
 	defer func() { _ = db.Close() }()
 
-	return promoteTheory(db, f, mechanismConfirmed, differentFamilyReproduced, stdout, stderr)
+	return promoteTheory(db, f, mechanismConfirmed, differentFamilyReproduced, decidedBy, stdout, stderr)
 }
 
 // openPromoteStore opens the local, per-repository store, assuming
@@ -108,6 +125,10 @@ func openPromoteStore() (*sql.DB, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := decisionledger.EnsureSchema(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return db, nil
 }
 
@@ -120,7 +141,7 @@ func openPromoteStore() (*sql.DB, error) {
 // every condition holds - appends a Theory-stage evidence record for
 // every one of those hypotheses/laws ("promotes the phenomenon's
 // theses to Theory," plural).
-func promoteTheory(db *sql.DB, f loadedFicha, mechanismConfirmed, differentFamilyReproduced bool, stdout, stderr io.Writer) int {
+func promoteTheory(db *sql.DB, f loadedFicha, mechanismConfirmed, differentFamilyReproduced bool, decidedBy string, stdout, stderr io.Writer) int {
 	ids := allHypothesisIDs(f)
 	if len(ids) == 0 {
 		_, _ = fmt.Fprintf(stdout, "%s: no hypotheses or laws to promote\n", f.phenomenonID)
@@ -166,6 +187,22 @@ func promoteTheory(db *sql.DB, f loadedFicha, mechanismConfirmed, differentFamil
 			return 1
 		}
 	}
+
+	// Recording the decision is part of this command, not an
+	// afterthought: if it fails, the command reports an error even
+	// though the promotion above already applied - see decisionledger's
+	// own design decision #3 for why this ordering is disclosed rather
+	// than hidden behind a success report.
+	if _, err := decisionledger.Append(db, decisionledger.Decision{
+		Kind: "promotion", Subject: f.phenomenonID, Determination: "Theory",
+		Rationale: fmt.Sprintf("every thesis confirmed, mechanism confirmed: %v, different-family reproduction: %v, swarm/attack robust: %v",
+			mechanismConfirmed, differentFamilyReproduced, swarmRobust),
+		DecidedBy: decidedBy,
+	}); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: promoted to Theory but could not record the decision: %v\n", err)
+		return 1
+	}
+
 	_, _ = fmt.Fprintf(stdout, "%s: promoted %d hypothesis/law(s) to Theory\n", f.phenomenonID, len(ids))
 	return 0
 }
@@ -207,16 +244,24 @@ func allHypothesisIDs(f loadedFicha) []string {
 // runPromoteLaw parses "law"'s own arguments and loads the real
 // file/store - the thin, real-path wrapper around [promoteLaw].
 func runPromoteLaw(args []string, stdout, stderr io.Writer) int {
+	var decidedBy string
 	var hiddenSamplesConformant, newCodeVersionsConformant bool
 	var positional []string
-	for _, arg := range args {
-		switch arg {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "--hidden-samples-conformant":
 			hiddenSamplesConformant = true
 		case "--new-code-versions-conformant":
 			newCodeVersionsConformant = true
+		case "--decided-by":
+			i++
+			if i >= len(args) {
+				_, _ = fmt.Fprintln(stderr, promoteUsage)
+				return 1
+			}
+			decidedBy = args[i]
 		default:
-			positional = append(positional, arg)
+			positional = append(positional, args[i])
 		}
 	}
 	if len(positional) != 2 {
@@ -224,6 +269,15 @@ func runPromoteLaw(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	path, hypothesisID := positional[0], positional[1]
+
+	if decidedBy == "" {
+		u, err := currentOSUser()
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "conjecture: --decided-by not given and the OS user could not be determined")
+			return 1
+		}
+		decidedBy = u
+	}
 
 	f, err := loadFicha(path)
 	if err != nil {
@@ -237,7 +291,7 @@ func runPromoteLaw(args []string, stdout, stderr io.Writer) int {
 	}
 	defer func() { _ = db.Close() }()
 
-	return promoteLaw(db, f, hypothesisID, hiddenSamplesConformant, newCodeVersionsConformant, stdout, stderr)
+	return promoteLaw(db, f, hypothesisID, hiddenSamplesConformant, newCodeVersionsConformant, decidedBy, stdout, stderr)
 }
 
 // promoteLaw implements "conjecture promote law"'s own real logic
@@ -245,7 +299,7 @@ func runPromoteLaw(args []string, stdout, stderr io.Writer) int {
 // for real, applies [evidenceledger.PromoteToLaw] with
 // hiddenSamplesConformant/newCodeVersionsConformant as given, and - if
 // every condition holds - appends a Law-stage evidence record.
-func promoteLaw(db *sql.DB, f loadedFicha, hypothesisID string, hiddenSamplesConformant, newCodeVersionsConformant bool, stdout, stderr io.Writer) int {
+func promoteLaw(db *sql.DB, f loadedFicha, hypothesisID string, hiddenSamplesConformant, newCodeVersionsConformant bool, decidedBy string, stdout, stderr io.Writer) int {
 	h, compositeID, _, found := findHypothesisByID(f, hypothesisID)
 	if !found {
 		_, _ = fmt.Fprintf(stderr, "conjecture: no hypothesis with id %q in %s\n", hypothesisID, f.phenomenon)
@@ -270,6 +324,17 @@ func promoteLaw(db *sql.DB, f loadedFicha, hypothesisID string, hiddenSamplesCon
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
+
+	if _, err := decisionledger.Append(db, decisionledger.Decision{
+		Kind: "promotion", Subject: compositeID, Determination: "Law",
+		Rationale: fmt.Sprintf("universally quantified, conformant against hidden samples: %v, conformant across new code versions: %v",
+			hiddenSamplesConformant, newCodeVersionsConformant),
+		DecidedBy: decidedBy,
+	}); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: promoted to Law but could not record the decision: %v\n", err)
+		return 1
+	}
+
 	_, _ = fmt.Fprintf(stdout, "%s: promoted to Law\n", compositeID)
 	return 0
 }

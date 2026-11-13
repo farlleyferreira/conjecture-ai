@@ -16,6 +16,7 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/conformancecycle"
 	"github.com/farlleyferreira/conjecture-ai/internal/contextcomposition"
 	"github.com/farlleyferreira/conjecture-ai/internal/contextengine"
+	"github.com/farlleyferreira/conjecture-ai/internal/decisionledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/sandbox"
@@ -149,6 +150,9 @@ func openCheckTestStore(t *testing.T) *sql.DB {
 		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
 	}
 	if err := contextengine.EnsureSchema(db); err != nil {
+		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
+	}
+	if err := decisionledger.EnsureSchema(db); err != nil {
 		t.Fatalf("EnsureSchema returned unexpected error: %v", err)
 	}
 	return db

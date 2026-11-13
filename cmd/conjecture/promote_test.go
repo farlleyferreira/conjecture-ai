@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/adversarialslm"
+	"github.com/farlleyferreira/conjecture-ai/internal/decisionledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 )
 
@@ -81,7 +82,7 @@ func TestPromoteTheory_AllConditionsMetPromotesEveryHypothesis(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := promoteTheory(db, f, true, true, &stdout, &stderr)
+	code := promoteTheory(db, f, true, true, "alice", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("promoteTheory returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
 	}
@@ -96,6 +97,18 @@ func TestPromoteTheory_AllConditionsMetPromotesEveryHypothesis(t *testing.T) {
 	if !found || latest.Stage != evidenceledger.Theory {
 		t.Errorf("latest stage = %v (found=%v), want Theory", latest.Stage, found)
 	}
+
+	decisions, err := decisionledger.List(db)
+	if err != nil {
+		t.Fatalf("decisionledger.List returned unexpected error: %v", err)
+	}
+	if len(decisions) != 1 {
+		t.Fatalf("decisionledger.List returned %d decisions, want 1", len(decisions))
+	}
+	got := decisions[0]
+	if got.Kind != "promotion" || got.Subject != f.phenomenonID || got.Determination != "Theory" || got.DecidedBy != "alice" {
+		t.Errorf("recorded decision = %+v, want kind promotion, subject %q, determination Theory, decided by alice", got, f.phenomenonID)
+	}
 }
 
 func TestPromoteTheory_ThesisNotConfirmedDoesNotPromote(t *testing.T) {
@@ -107,7 +120,7 @@ func TestPromoteTheory_ThesisNotConfirmedDoesNotPromote(t *testing.T) {
 	// No evidence recorded at all - never reached Thesis.
 
 	var stdout, stderr bytes.Buffer
-	code := promoteTheory(db, f, true, true, &stdout, &stderr)
+	code := promoteTheory(db, f, true, true, "alice", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("promoteTheory returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
 	}
@@ -145,12 +158,18 @@ func TestPromoteTheory_MechanismNotConfirmedDoesNotPromote(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	// mechanismConfirmed = false this time.
-	code := promoteTheory(db, f, false, true, &stdout, &stderr)
+	code := promoteTheory(db, f, false, true, "alice", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("promoteTheory returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "not promoted") {
 		t.Errorf("stdout should report it was not promoted, got %q", stdout.String())
+	}
+
+	if decisions, err := decisionledger.List(db); err != nil {
+		t.Fatalf("decisionledger.List returned unexpected error: %v", err)
+	} else if len(decisions) != 0 {
+		t.Errorf("decisionledger.List = %+v, want none recorded for a promotion that did not happen", decisions)
 	}
 }
 
@@ -162,7 +181,7 @@ func TestPromoteLaw_UniversalAndBothFlagsPromotes(t *testing.T) {
 	db := openCheckTestStore(t)
 
 	var stdout, stderr bytes.Buffer
-	code := promoteLaw(db, f, "fee-matches", true, true, &stdout, &stderr)
+	code := promoteLaw(db, f, "fee-matches", true, true, "alice", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("promoteLaw returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
 	}
@@ -178,6 +197,18 @@ func TestPromoteLaw_UniversalAndBothFlagsPromotes(t *testing.T) {
 	if !found || latest.Stage != evidenceledger.Law {
 		t.Errorf("latest stage = %v (found=%v), want Law", latest.Stage, found)
 	}
+
+	decisions, err := decisionledger.List(db)
+	if err != nil {
+		t.Fatalf("decisionledger.List returned unexpected error: %v", err)
+	}
+	if len(decisions) != 1 {
+		t.Fatalf("decisionledger.List returned %d decisions, want 1", len(decisions))
+	}
+	got := decisions[0]
+	if got.Kind != "promotion" || got.Subject != id || got.Determination != "Law" || got.DecidedBy != "alice" {
+		t.Errorf("recorded decision = %+v, want kind promotion, subject %q, determination Law, decided by alice", got, id)
+	}
 }
 
 func TestPromoteLaw_MissingFlagDoesNotPromote(t *testing.T) {
@@ -188,12 +219,18 @@ func TestPromoteLaw_MissingFlagDoesNotPromote(t *testing.T) {
 	db := openCheckTestStore(t)
 
 	var stdout, stderr bytes.Buffer
-	code := promoteLaw(db, f, "fee-matches", true, false, &stdout, &stderr)
+	code := promoteLaw(db, f, "fee-matches", true, false, "alice", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("promoteLaw returned exit code %d, want 0; stderr:\n%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "not promoted") {
 		t.Errorf("stdout should report it was not promoted, got %q", stdout.String())
+	}
+
+	if decisions, err := decisionledger.List(db); err != nil {
+		t.Fatalf("decisionledger.List returned unexpected error: %v", err)
+	} else if len(decisions) != 0 {
+		t.Errorf("decisionledger.List = %+v, want none recorded for a promotion that did not happen", decisions)
 	}
 }
 
@@ -205,7 +242,7 @@ func TestPromoteLaw_UnknownHypothesisIDIsError(t *testing.T) {
 	db := openCheckTestStore(t)
 
 	var stdout, stderr bytes.Buffer
-	code := promoteLaw(db, f, "no-such-id", true, true, &stdout, &stderr)
+	code := promoteLaw(db, f, "no-such-id", true, true, "alice", &stdout, &stderr)
 	if code != 1 {
 		t.Errorf("promoteLaw with an unknown id: exit code = %d, want 1", code)
 	}

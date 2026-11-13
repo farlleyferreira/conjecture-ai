@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"fmt"
 	"io"
 	"os"
@@ -9,17 +10,42 @@ import (
 	"time"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
+	"github.com/farlleyferreira/conjecture-ai/internal/decisionledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/version"
 	"github.com/farlleyferreira/conjecture-ai/internal/yamlstrict"
 )
 
 const signUsage = "usage: conjecture sign [--user <name>] [--confirmed] <file.cjtr>"
 
+// openDecisionStore is runSign's own store resolver for recording a
+// candidate-review decision - a test hook, like sandbox.Sandbox's own
+// DockerBinary field: a real caller leaves this as [openRepoStore],
+// resolving the real per-OS system path; a test overrides it with a
+// temporary store instead, since that real path (e.g. "/var/lib/
+// conjecture" on Linux) is not guaranteed writable by whatever user a
+// test process runs as - a real finding from this exact test failing
+// in CI, not a hypothetical.
+var openDecisionStore = openRepoStore
+
 // runSign signs a .cjtr file in place (see cjtr.Sign): it refuses when
 // the file has an unresolved "???" marker, and otherwise replaces any
 // existing "signed" block with a new one recording the given (or
 // current OS) user, this binary's own version as "tool", today's date,
 // and whether --confirmed was given.
+//
+// A real "--confirmed" sign is also this codebase's own real
+// candidate-review decision point - a drafted .cjtr candidate, human-
+// reviewed and accepted - recorded via [decisionledger.Append]. This
+// stands in for decisionledger's own design's "conjecture base review
+// (accept/reject)": that command does not exist anywhere in this
+// codebase (there is no accept/reject verb on "conjecture base" at
+// all), while "conjecture sign --confirmed" is a real, already-
+// existing human-confirmation action on a real drafted candidate -
+// the honest substitute, not a guess at an unbuilt command. Only the
+// accept half is recorded: nothing in this codebase has a distinct
+// "reject a candidate" action either (a rejected draft today is
+// simply never signed, or discarded outside this tool), so there is
+// no real reject event here to record.
 func runSign(args []string, stdout, stderr io.Writer) int {
 	var userName, path string
 	var confirmed bool
@@ -62,8 +88,36 @@ func runSign(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	if confirmed {
+		db, err := openDecisionStore()
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "conjecture: signed but could not record the decision: %v\n", err)
+			return 1
+		}
+		defer func() { _ = db.Close() }()
+		if err := recordCandidateReviewDecision(db, path, userName); err != nil {
+			_, _ = fmt.Fprintf(stderr, "conjecture: signed but could not record the decision: %v\n", err)
+			return 1
+		}
+	}
+
 	_, _ = fmt.Fprintf(stdout, "signed %s (user %s, confirmed %v)\n", path, userName, confirmed)
 	return 0
+}
+
+// recordCandidateReviewDecision is "conjecture sign --confirmed"'s own
+// real, store-independent half - see [runSign]'s own doc comment for
+// why this is decisionledger's "candidate-review" producer - so a
+// test can exercise it against a temporary store instead of the real
+// per-OS one [openRepoStore] always resolves to.
+func recordCandidateReviewDecision(db *sql.DB, path, decidedBy string) error {
+	if err := decisionledger.EnsureSchema(db); err != nil {
+		return err
+	}
+	_, err := decisionledger.Append(db, decisionledger.Decision{
+		Kind: "candidate-review", Subject: path, Determination: "accepted", DecidedBy: decidedBy,
+	})
+	return err
 }
 
 // currentOSUser reports the current OS user's username - the fallback
