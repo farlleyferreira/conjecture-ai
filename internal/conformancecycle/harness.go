@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
 	"github.com/farlleyferreira/conjecture-ai/internal/sandbox"
@@ -54,6 +55,21 @@ const (
 // returns the resulting output bindings alongside the sandbox's own
 // result.
 //
+// input is filtered to its own "input."-prefixed bindings before it
+// is written to InputFileName, even though every real caller
+// (directedsampling.go, boundedproof.go, completeproof.go) actually
+// passes a full baseline-derived binding set that still carries the
+// hypothesis's own worked example's *output* value too (each of those
+// callers only ever varies one input concept at a time, holding
+// "every other concept at the baseline" - including the baseline's
+// own output). Marshaling that unfiltered would hand the sandboxed
+// implementation the very answer the check exists to ask it for,
+// under a key ("output.<x>") indistinguishable from any other input
+// variable - found for real wrapping a genuine third-party library
+// (python-slugify) for conformance checking, not by inspection: an
+// implementation that happens to trust or echo back unrecognized
+// input keys would otherwise pass without doing any real work at all.
+//
 // RunHarness returns a non-nil error only for an infrastructure
 // failure of its own (encoding/writing the input file, the sandbox
 // itself failing to even start, or - once the implementation reports
@@ -67,7 +83,7 @@ const (
 // does.
 func RunHarness(ctx context.Context, sb *sandbox.Sandbox, opts sandbox.Options, input cjtr.Bindings) (cjtr.Bindings, sandbox.Result, error) {
 	inputPath := filepath.Join(opts.Dir, InputFileName)
-	inputJSON, err := json.Marshal(input)
+	inputJSON, err := json.Marshal(inputOnly(input))
 	if err != nil {
 		return nil, sandbox.Result{}, fmt.Errorf("conformancecycle: encoding harness input: %w", err)
 	}
@@ -97,6 +113,21 @@ func RunHarness(ctx context.Context, sb *sandbox.Sandbox, opts sandbox.Options, 
 		return nil, result, fmt.Errorf("conformancecycle: decoding %s: %w", OutputFileName, err)
 	}
 	return output, result, nil
+}
+
+// inputOnly returns bindings's own "input."-prefixed entries only -
+// see [RunHarness]'s own doc comment for why: a caller's bindings may
+// still carry a baseline worked example's output value too, which
+// must never reach the sandboxed implementation as if it were a
+// genuine input.
+func inputOnly(bindings cjtr.Bindings) cjtr.Bindings {
+	filtered := make(cjtr.Bindings, len(bindings))
+	for k, v := range bindings {
+		if strings.HasPrefix(k, "input.") {
+			filtered[k] = v
+		}
+	}
+	return filtered
 }
 
 // CheckHypothesisAgainstImplementation runs one real conformance check
