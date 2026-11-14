@@ -19,36 +19,46 @@ no fee. Everything else pays."*
 The agent delivered this and said it was finished:
 
 ```python
-hours = float(data["input.hours_before_departure"])
-fee = "0.00" if hours >= 24.00 else "150.00"
+def change_fee(inputs):
+    hours = Decimal(inputs["hours_before_departure"])
+    fee = "0.00" if hours >= 24 else "150.00"
+    return {"change_fee": fee}
 ```
 
-`conjecture` builds cases from the rule, runs the program in a container
-with no network, and answers:
-
 ```
-$ conjecture check conjecture/phenomena/ticketing/ticket-change-fee.cjtr ticket-fee-demo:latest python3 /work/adapter.py
+$ conjecture check conjecture/phenomena/ticketing/ticket-change-fee.cjtr --lang python --entry pricing.fees:change_fee
 ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: judge: accepted
 ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: conformance (directed sampling): non-conformant
-ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free:   counterexample: map[input.fare_class:economy-basic input.hours_before_departure:30.00 output.change_fee:0.00]
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free:   counterexample: fare_class=economy-basic, hours_before_departure=30.00 -> change_fee=0.00
 ```
 
-An Economy Basic ticket changed 30 hours ahead went free: the code
-forgot the fare class. After the fix:
+An Economy Basic ticket went free: the code forgot the fare class. The
+agent fixed that, but wrote `hours > 24`:
 
 ```
-$ conjecture check conjecture/phenomena/ticketing/ticket-change-fee.cjtr ticket-fee-demo:latest python3 /work/adapter.py
-ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: judge: accepted
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: conformance (directed sampling): non-conformant
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free:   counterexample: fare_class=economy-flex, hours_before_departure=24.00 -> change_fee=150.00
+```
+
+Exactly 24 hours should have been free. After the second fix:
+
+```
 ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: conformance (directed sampling): conformant
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: conformance (hidden sampling (20 random cases, seed 17164254410232975056)): conformant
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: 20/100 failure-free hidden cases against this code (low weight)
 
 $ conjecture status conjecture/phenomena/ticketing/ticket-change-fee.cjtr
 ticketing::ticket-change-fee: not signed
-ticketing::ticket-change-fee::flex-fee-waiver::flex-inside-window: stage=Hypothesis attacked="directed sampling" survived="every generated case conformed"
+ticketing::ticket-change-fee::flex-fee-waiver::flex-inside-window: stage=Hypothesis attacked="hidden sampling (20 random cases, seed 17164254410232975056)" survived="every sampled case conformed"
+ticketing::ticket-change-fee::flex-fee-waiver::flex-inside-window: hidden cases 20/100 (low weight); code versions meeting it: 0; model families meeting it: none yet
 ```
 
 `status` does not say "approved". It says what was attacked, what
-survived, which stage the rule is at, and that no human has signed it
-yet.
+survived, how many cases are still needed to move up a stage, and that
+no human has signed yet.
+
+There is no hand-written Dockerfile, image or adapter in this demo. The
+outputs above come from a real run.
 
 <details>
 <summary>The rule as a <code>.cjtr</code> file</summary>
@@ -63,7 +73,7 @@ conjecture: 1.0.0
 phenomenon: ticket-change-fee
 
 concepts:
-  hours before departure: {variable: input.hours_before_departure, type: decimal}
+  hours before departure: {variable: input.hours_before_departure, type: decimal, range: {min: 0.00, max: 720.00}}
   fare class: {variable: input.fare_class, one_of: [economy-basic, economy-flex]}
   change fee: {variable: output.change_fee, type: decimal}
   free change window: {value: 24.00}
@@ -83,35 +93,6 @@ rules:
           - {hours before departure: 30.00, fare class: economy-flex, change fee: 0.00}
           - {hours before departure: 10.00, fare class: economy-flex, change fee: 150.00}
           - {hours before departure: 30.00, fare class: economy-basic, change fee: 150.00}
-```
-
-</details>
-
-<details>
-<summary>The full program and the demo container</summary>
-
-`conjecture` does not read your code. It writes `conjecture_input.json`,
-runs the command you name inside the image, and reads
-`conjecture_output.json`.
-
-```python
-# adapter.py - fixed version
-import json
-data = json.load(open("conjecture_input.json"))
-hours = float(data["input.hours_before_departure"])
-fare_class = data["input.fare_class"]
-fee = "0.00" if (fare_class == "economy-flex" and hours >= 24.00) else "150.00"
-json.dump({"output.change_fee": fee}, open("conjecture_output.json", "w"))
-```
-
-```dockerfile
-FROM python:3-slim
-WORKDIR /work
-COPY adapter.py /work/adapter.py
-```
-
-```bash
-podman build -t ticket-fee-demo:latest .
 ```
 
 </details>
@@ -152,8 +133,12 @@ You need Docker or Podman for `check`. `conjecture` uses `docker` when
 it is on `PATH`, otherwise `podman`. Set `CONJECTURE_CONTAINER_RUNTIME`
 to pick another.
 
-The binaries are not signed. Windows (SmartScreen or Smart App Control)
-may warn or block on first run.
+Every binary carries a build provenance attestation. To check a
+download:
+
+```bash
+gh attestation verify conjecture_linux_amd64.tar.gz --repo farlleyferreira/conjecture-ai
+```
 
 ## Use it with your agent
 
@@ -177,22 +162,49 @@ plain language. The workflow the skill enforces:
 2. You sign in your own terminal: `conjecture sign --user <name> --confirmed <file.cjtr>`.
    The MCP server exposes neither `sign` nor `promote`: the agent cannot
    approve the rule for you.
-3. The agent writes the implementation and calls `check`.
-4. If a counterexample comes back, it fixes the code. The signed rule
-   does not change to make the code pass.
+3. The agent writes the implementation and an entry function for the
+   rule.
+4. The agent calls `check`. If a counterexample comes back, it fixes the
+   code. The signed rule does not change to make the code pass.
 5. `status` sums up who signed and the state of each hypothesis.
 
 Any stdio MCP client works with `conjecture mcp`. The skill follows the
 Claude Code format.
+
+## The entry function
+
+`conjecture` does not read your code. You point at one function, and it
+generates the adapter, picks the language's image and mounts your
+project read-only, with no network.
+
+The function has the same shape in every language: it takes the rule's
+inputs as a map of name to text and returns the outputs the same way.
+Values arrive as text (`"30.00"`), so a decimal never becomes a binary
+float on the way.
+
+| Language | `--lang` | `--entry` |
+|---|---|---|
+| Python | `python` | `package.module:function` |
+| JavaScript | `javascript` | `path/file.js:exportedFunction` |
+| TypeScript | `typescript` | `path/file.ts:exportedFunction` |
+| Go | `go` | `./package/dir:Function` |
+| Java | `java` | `com.example.Class:staticMethod` |
+| C# | `csharp` | `path/Assembly.dll:Namespace.Class:StaticMethod` |
+| Ruby | `ruby` | `path/file.rb:Module::Class.method` |
+
+For another language, or for dependencies that are not in the project
+tree, the original form remains: `conjecture check <file.cjtr> <image> <command...>`,
+with a program that reads `conjecture_input.json` and writes
+`conjecture_output.json`.
 
 ## Use it from the terminal
 
 | Command | Does |
 |---|---|
 | `conjecture verify <file.cjtr>` | Checks the rule's examples against the rule itself. No container, no AI. |
-| `conjecture check <file.cjtr> <image> <command...>` | Generates cases, runs the program in the container, gives the verdict. No AI. |
+| `conjecture check <file.cjtr> --lang <language> --entry <entry>` | Generates cases, runs your function in the container, gives the verdict. No AI. |
 | `conjecture sign --user <name> --confirmed <file.cjtr>` | Records that a human reviewed the rule. |
-| `conjecture status [file.cjtr]` | Shows signature, stage and evidence for each hypothesis. |
+| `conjecture status [file.cjtr]` | Shows signature, stage, evidence and what the next promotion still needs. |
 
 `verify`, `check`, `sign`, `status`, `promote` and `context` run on your
 machine and call no model. `draft`, `implement`, `work`, `attack` and
@@ -204,39 +216,58 @@ Full command and provider list: [docs/COMMANDS.md](docs/COMMANDS.md).
 
 ## How trust goes up
 
-Each rule has a stage: Hypothesis, Thesis, Theory, Law. The idea is that
-moving up takes new evidence, not the same test again. What exists today
-is less than that:
+Each rule has a stage. No step takes the word of whoever asks for it:
+every one is computed from what is on record.
 
-| Step | How it happens today |
+`check` runs two kinds of case. Directed cases test the edges of the
+domain and the thresholds the rule itself names (24.00, 23.99, 24.01).
+Hidden cases are drawn at random from the declared domain on every run.
+Only hidden cases count toward promotion: the same cases a hundred times
+are one observation, not a hundred.
+
+| Step | What has to be on record |
 |---|---|
-| Hypothesis to Thesis | Automatic in `check`, but only for rules declared as `laws`, after 3,000 accumulated failure-free cases. One counterexample resets the count. An ordinary hypothesis stays at Hypothesis even when `check` is conformant. |
-| Thesis to Theory | Manual, with `conjecture promote theory`. The conditions (mechanism confirmed, reproduction by a different model family) are flags you attest. |
-| Theory to Law | Manual, with `conjecture promote law`. The conditions (hidden samples, new code versions) are also flags you attest. |
+| Hypothesis to Thesis | Failure-free hidden cases against the current rule and code: 100 (low weight), 300, 1,000 or 3,000 (critical weight). Automatic in `check`. |
+| Thesis to Theory | Every rule in the file at Thesis, the rule signed with `--confirmed`, the count met on implementations from two different model families, and an adversarial attack that found no violation. Through `conjecture promote theory`. |
+| Theory to Law | A universal rule (`always`), at Theory, with the count met on two versions of the code. Through `conjecture promote law`. |
 
-Every promotion is recorded with who decided it.
+One counterexample demotes the rule and resets that code version's
+count. Changing one byte of the code starts a new count.
 
 ## Limits
 
-- **It does not prove the code is right.** `check` tries boundary and
-  partition values, not every possible input. Only a fully enumerable
-  domain gets complete verification.
+- **It does not prove the code is right.** The cases are samples. 100
+  failure-free cases bound the violation rate at about 3% with 95%
+  confidence, inside the declared domain and not outside it. Only a
+  fully enumerable domain gets complete verification.
 - **It only covers declarable business rules.** The `.cjtr` grammar
   expresses comparisons over decimals and categories
   (`given`/`then`/`otherwise`/`always`). It does not replace unit tests
   for arbitrary logic.
-- **You have to package the program.** Each implementation becomes a
-  container image with an adapter that reads and writes JSON. That is
-  extra work per rule.
-- **The adapter is a place to cheat.** If the same agent writes the code
-  and the adapter, it can make the adapter answer what the rule expects.
-  Review the adapter.
+- **The entry function is a place to cheat.** The adapter is generated,
+  but the entry function is project code and decides what the rule's
+  names mean. If it re-implements the rule instead of calling the real
+  code, `conjecture` approves the function, not the system. Review it.
 - **The rule is worth what your review is worth.** A `.cjtr` drafted by
   AI and not signed gets a notice from `verify` and shows as `not signed`
-  in `status`, but `conjecture` cannot know whether the signed rule is the rule you meant.
-- **The stage ladder is incomplete.** Ordinary hypotheses do not move up,
-  and Theory and Law depend on flags a human attests, not on
-  measurement. See [How trust goes up](#how-trust-goes-up).
+  in `status`, but `conjecture` cannot know whether the signed rule is
+  the rule you meant.
+- **The model family is declared, not verified.** `--produced-by`
+  records who wrote the implementation. Nothing in the code proves its
+  author. The step to Theory depends on that declaration.
+- **No declared domain, no hidden cases.** A decimal with no `range` or
+  a text with no `one_of` cannot be drawn from, and the rule stays at
+  Hypothesis. `check` names the concept that is missing one.
+- **Dependencies have to be in the project tree.** The container has no
+  network. `node_modules`, compiled classes and the Go module cache
+  work; a global `pip install` does not. For the rest, pass `--image`.
+- **TypeScript runs on Node, with no compiler.** Relative imports need
+  an explicit extension. C# needs you to build the project first and
+  point at the DLL.
+- **Every case is one container run.** We measured about half a second
+  per case (Python, Podman on Windows): 100 cases in about a minute,
+  3,000 in about 25. Compiled languages and other machines were not
+  measured.
 - **`implement` and `work` do not change your project.** They produce a
   disposable single-file Python script. For real code, use the workflow
   with your agent.
@@ -245,10 +276,13 @@ Every promotion is recorded with who decided it.
   believing it.
 - **The sandbox only blocks outbound network.** There is no filesystem
   or resource isolation. Do not run code you do not trust.
+- **The binaries are not code-signed.** The attestation proves where
+  they came from, but Windows (SmartScreen, Smart App Control, Defender)
+  may warn, block, or flag the executable as suspicious.
 - **Linux and Windows binaries have no `deps check`.** That command uses
   Tree-sitter, which is C code. To use it, build with `CGO_ENABLED=1`.
-- **No production history.** The project was built largely in a single
-  long session, with AI agents.
+- **No production history.** The project was built largely in long
+  sessions with AI agents.
 - **GUI targets do not work through the main flow.** Accessibility
   backends exist for Windows and Linux, but the grammar cannot declare a
   GUI target yet. macOS is not supported
