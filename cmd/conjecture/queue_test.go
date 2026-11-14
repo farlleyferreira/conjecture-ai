@@ -179,7 +179,7 @@ func TestComputeQueueList_NoOtherPhenomenonMeansNoWarning(t *testing.T) {
 }
 
 func TestRunQueueList_ReportsGroupedSummary(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	isolateLocalStore(t)
 	db, err := persistence.OpenStore(".")
 	if err != nil {
 		t.Fatalf("OpenStore returned unexpected error: %v", err)
@@ -212,7 +212,7 @@ func TestRunQueueList_PhenomenonWithoutAreaIsUsageError(t *testing.T) {
 }
 
 func TestRunQueueReview_EmptyReportsEmpty(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	isolateLocalStore(t)
 
 	var stdout, stderr bytes.Buffer
 	code := runQueueReview(nil, &stdout, &stderr)
@@ -225,7 +225,7 @@ func TestRunQueueReview_EmptyReportsEmpty(t *testing.T) {
 }
 
 func TestRunQueueReview_ReportsDeadLetteredItems(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	isolateLocalStore(t)
 	db, err := persistence.OpenStore(".")
 	if err != nil {
 		t.Fatalf("OpenStore returned unexpected error: %v", err)
@@ -261,7 +261,7 @@ func TestRunQueueReview_WrongArgCountIsUsageError(t *testing.T) {
 }
 
 func TestRunQueueReview_ResolveRemovesItemFromDefaultListingButAllStillShowsIt(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	isolateLocalStore(t)
 	db, err := persistence.OpenStore(".")
 	if err != nil {
 		t.Fatalf("OpenStore returned unexpected error: %v", err)
@@ -307,7 +307,7 @@ func TestRunQueueReview_ResolveRemovesItemFromDefaultListingButAllStillShowsIt(t
 }
 
 func TestRunQueueReview_ResolveUnknownRowIDErrors(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	isolateLocalStore(t)
 
 	var stdout, stderr bytes.Buffer
 	code := runQueueReview([]string{"--resolve", "999"}, &stdout, &stderr)

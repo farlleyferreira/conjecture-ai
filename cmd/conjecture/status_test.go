@@ -176,7 +176,7 @@ func TestComputeProjectStatus_MalformedFileDisclosedNotDropped(t *testing.T) {
 }
 
 func TestRunStatus_ProjectWideAggregateReportsSummary(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	isolateLocalStore(t)
 	repoRoot := t.TempDir()
 	writeProjectStatusFixture(t, repoRoot, "demo-area", "demo", statusFixture)
 

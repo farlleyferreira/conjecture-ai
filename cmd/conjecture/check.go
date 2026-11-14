@@ -312,7 +312,7 @@ func checkHypothesisConformance(
 	}
 	_, _ = fmt.Fprintf(stdout, "%s: %s: conformance (%s): %s\n", compositeID, h.Name, level, cvVerdict)
 	if counterexample != nil {
-		_, _ = fmt.Fprintf(stdout, "%s: %s:   counterexample: %v\n", compositeID, h.Name, counterexample.Value)
+		_, _ = fmt.Fprintf(stdout, "%s: %s:   counterexample: %s\n", compositeID, h.Name, formatCounterexample(counterexample.Value))
 	}
 
 	recordEvidence(db, compositeID, h, level, cvVerdict, counterexample, image, specVersion, caseCount, isLaw, stdout)
@@ -473,7 +473,7 @@ func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, level con
 	case conformancecycle.NonConformant:
 		evidence.Attacked = level.String()
 		if counterexample != nil {
-			evidence.Attacked += fmt.Sprintf("; found counterexample: %v", counterexample.Value)
+			evidence.Attacked += fmt.Sprintf("; found counterexample: %s", formatCounterexample(counterexample.Value))
 		}
 	case conformancecycle.Inconclusive:
 		evidence.Open = level.String() + ": at least one round timed out with no definitive violation found"
