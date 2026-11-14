@@ -5,6 +5,14 @@
 
 * bootstrap OpenSpec capability baseline for conjecture ([#15](https://github.com/farlleyferreira/conjecture-ai/issues/15)) ([fdc440d](https://github.com/farlleyferreira/conjecture-ai/commit/fdc440d4d33e43968e4aeea33b23fd7c8f013951))
 
+## [1.3.0](https://github.com/farlleyferreira/conjecture-ai/compare/v1.2.0...v1.3.0) (2026-11-14)
+
+
+### Features
+
+* language targets for check and a measured stage ladder ([#180](https://github.com/farlleyferreira/conjecture-ai/issues/180)) ([3ee0e66](https://github.com/farlleyferreira/conjecture-ai/commit/3ee0e662f3bc5467757a58879f9f34f8c1a40c20))
+* prebuilt binaries, one-line install and a README built around the agent workflow ([#178](https://github.com/farlleyferreira/conjecture-ai/issues/178)) ([d8d1a55](https://github.com/farlleyferreira/conjecture-ai/commit/d8d1a556a0c569729c5d3129e293143749501da4))
+
 ## [1.2.0](https://github.com/farlleyferreira/conjecture-ai/compare/v1.1.0...v1.2.0) (2026-11-13)
 
 
