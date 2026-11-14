@@ -722,7 +722,12 @@ func TestParseCheckArgs(t *testing.T) {
 		want checkRequest
 	}{
 		{"image and command", []string{"f.cjtr", "img:1", "python3", "a.py"}, true,
-			checkRequest{path: "f.cjtr", image: "img:1", command: []string{"python3", "a.py"}}},
+			checkRequest{path: "f.cjtr", src: ".", image: "img:1", command: []string{"python3", "a.py"}}},
+		{"image form with its own flags first, and the command's flags left alone", []string{"f.cjtr", "--samples", "5", "--produced-by", "openai", "img:1", "python3", "-u", "a.py"}, true,
+			checkRequest{path: "f.cjtr", src: ".", image: "img:1", command: []string{"python3", "-u", "a.py"}}},
+		{"image form rejects a language-target flag", []string{"f.cjtr", "--entry", "m:f", "img:1", "python3"}, false, checkRequest{}},
+		{"language form rejects a trailing command", []string{"f.cjtr", "--lang", "py", "--entry", "m:f", "python3"}, false, checkRequest{}},
+		{"samples must be a non-negative number", []string{"f.cjtr", "--samples", "-1", "img:1", "python3"}, false, checkRequest{}},
 		{"language target", []string{"f.cjtr", "--lang", "go", "--entry", "./p:F"}, true,
 			checkRequest{path: "f.cjtr", lang: "go", entry: "./p:F", src: "."}},
 		{"language target with source and image", []string{"f.cjtr", "--entry", "m:f", "--lang", "py", "--src", "svc", "--image", "x:2"}, true,
@@ -746,5 +751,16 @@ func TestParseCheckArgs(t *testing.T) {
 			got.image != c.want.image || strings.Join(got.command, " ") != strings.Join(c.want.command, " ") {
 			t.Errorf("%s: parseCheckArgs = %+v, want %+v", c.name, got, c.want)
 		}
+	}
+}
+
+func TestParseCheckArgs_SamplesAndProducer(t *testing.T) {
+	req, ok := parseCheckArgs([]string{"f.cjtr", "--lang", "go", "--entry", "./p:F"})
+	if !ok || req.samples != defaultHiddenSamples || req.producedBy != "" {
+		t.Errorf("defaults = %+v, ok %v, want %d samples and no declared producer", req, ok, defaultHiddenSamples)
+	}
+	req, ok = parseCheckArgs([]string{"f.cjtr", "--lang", "go", "--entry", "./p:F", "--samples", "0", "--produced-by", "anthropic"})
+	if !ok || req.samples != 0 || req.producedBy != "anthropic" {
+		t.Errorf("explicit = %+v, ok %v, want 0 samples produced by anthropic", req, ok)
 	}
 }
