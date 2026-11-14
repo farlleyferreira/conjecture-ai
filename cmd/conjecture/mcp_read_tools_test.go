@@ -178,7 +178,7 @@ func TestMCPContextResolveConflictTool_ReportsDecidedWinner(t *testing.T) {
 }
 
 func TestMCPQueueListTool_EmptyQueueReportsEmpty(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	isolateLocalStore(t)
 	session, _ := connectMCPTestClient(t)
 
 	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "queue_list", Arguments: map[string]any{}})
@@ -202,7 +202,7 @@ func TestMCPQueueListTool_EmptyQueueReportsEmpty(t *testing.T) {
 }
 
 func TestMCPQueueListTool_GroupsByPhenomenonAndDrillsDown(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	isolateLocalStore(t)
 	session, _ := connectMCPTestClient(t)
 
 	// queueListTool reads via openRepoStore (the real per-OS store,
@@ -275,7 +275,7 @@ func TestMCPQueueListTool_GroupsByPhenomenonAndDrillsDown(t *testing.T) {
 }
 
 func TestMCPQueueListTool_DrillDownWarnsAboveThreeTimesAverage(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	isolateLocalStore(t)
 	session, _ := connectMCPTestClient(t)
 
 	queueDB, err := persistence.OpenStore(".")
@@ -317,7 +317,7 @@ func TestMCPQueueListTool_DrillDownWarnsAboveThreeTimesAverage(t *testing.T) {
 }
 
 func TestMCPQueueListTool_PhenomenonWithoutAreaIsError(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	isolateLocalStore(t)
 	session, _ := connectMCPTestClient(t)
 
 	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "queue_list", Arguments: map[string]any{"phenomenon": "checkout"}})
@@ -345,7 +345,7 @@ func TestMCPServer_QueueReviewToolIsRegistered(t *testing.T) {
 }
 
 func TestMCPQueueReviewTool_ReportsDeadLetteredItems(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	isolateLocalStore(t)
 	session, _ := connectMCPTestClient(t)
 
 	queueDB, err := persistence.OpenStore(".")
@@ -381,7 +381,7 @@ func TestMCPQueueReviewTool_ReportsDeadLetteredItems(t *testing.T) {
 }
 
 func TestMCPQueueReviewTool_DefaultHidesResolvedButAllIncludesThem(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	isolateLocalStore(t)
 	session, _ := connectMCPTestClient(t)
 
 	queueDB, err := persistence.OpenStore(".")
@@ -437,7 +437,7 @@ func TestMCPQueueReviewTool_DefaultHidesResolvedButAllIncludesThem(t *testing.T)
 }
 
 func TestMCPGraphInspectTool_ReportsSeededAxis(t *testing.T) {
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	isolateLocalStore(t)
 	session, _ := connectMCPTestClient(t)
 
 	out := callReadTool(t, session, "graph_inspect", map[string]any{"node_id": "demo::node"})

@@ -11,9 +11,11 @@
 // query, X11's XScreenSaverQueryInfo with no equivalent at all under
 // Wayland) - each either CGO or deeply platform-fragmented, unlike
 // every other OS-level reading this codebase does (RAM via
-// github.com/pbnjay/memory, now CPU via github.com/mackerelio/
-// go-osstat, both pure Go, no CGO, covering Linux/macOS/Windows
-// identically). Overall CPU load is this package's own chosen proxy
+// github.com/pbnjay/memory; CPU via github.com/mackerelio/go-osstat
+// on Linux and on macOS with CGO, via kernel32's GetSystemTimes on
+// Windows where go-osstat has no reading, and not at all on macOS
+// without CGO - see cpuload_read.go, cpuload_windows.go and
+// cpuload_darwin_nocgo.go). Overall CPU load is this package's own chosen proxy
 // instead: a genuinely real, cross-platform-uniform signal for "the
 // machine is doing significant work right now" - close enough to
 // what deferring heavy work is actually protecting against, without
