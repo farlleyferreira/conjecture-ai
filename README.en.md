@@ -126,13 +126,23 @@ signed, attributable record that a human looked at it.
   can see the hidden cases the judge uses, call the judge directly, or
   sign anything on your behalf.
 - **An independent model actively tries to break your rule.** One local
-  adversarial SLM by default, or a whole swarm of them running in
-  parallel without colluding or debating - hunting for the
-  counterexample you didn't think of.
-- **Evidence accumulates - it isn't just pass/fail.** A rule climbs a
-  real maturity ladder (Hypothesis → Thesis → Theory → Law), and
-  `conjecture` checks for four specific kinds of spec gap before they
-  become missing behavior in shipped code.
+  adversarial SLM by default, or a swarm of at least five distinct
+  attack strategies, with budget allocated between them by a bandit -
+  hunting for the counterexample you didn't think of, never colluding
+  or debating with each other.
+- **Climbing the maturity ladder takes more than "it passed once".**
+  Thesis to Theory needs a second implementation, from a different model
+  family than the original, reproducing the result, plus robustness
+  against the whole swarm. Theory to Law needs conformance against
+  hidden samples and across new code versions. Evidence climbs a real
+  ladder (Hypothesis → Thesis → Theory → Law), never a binary pass/fail.
+- **Weight, relevance, and confidence are three independent axes, never
+  multiplied together.** Money, identity, permissions, and personal data
+  automatically come in as high weight - and that weight is never
+  auto-tuned by the system itself, on purpose.
+- **Knowledge bases cite real authority.** Norm, definition, reference,
+  or historical - four levels, not a flat list of links - so a decision
+  can point at something beyond the `.cjtr` file itself.
 - **Every verification context is versioned and resumable.** List it,
   reopen an exact past version, diff two versions, or restore one -
   nothing about where you left off has to be rebuilt from memory.
@@ -261,7 +271,7 @@ What it's not, on purpose:
   used it yet to make a real decision about real code they depend on -
   that's the next real test.
 
-Two more specific things to know:
+One more specific thing to know:
 
 - **The GUI-accessibility driver has real Windows (UI Automation) and Linux
   (AT-SPI) backends, but the `.cjtr` grammar has no way to declare a GUI
@@ -269,9 +279,6 @@ Two more specific things to know:
   in the CLI's main verification flow can reach it. macOS is not supported
   (no backend, by deliberate decision - see
   [issue #144](https://github.com/farlleyferreira/conjecture-ai/issues/144)).
-- **Materialization content generation** (a `conjecture/materializations/`
-  path exists after `conjecture init`, but nothing writes anything there
-  yet) is explicitly out of scope of the persistence work done so far.
 
 </details>
 
