@@ -51,6 +51,8 @@ Specify a behavior precisely with the user, then prove the real implementation m
 
 7. **Check it for real.** Call the `check` MCP tool with the file's path, `lang` and `entry` (or, for the fallback form, the image name and the command to run inside it). If the report says the implementation exited instead of answering, that is a crash in your code or a wrong `entry`, not a rule violation: read the output it prints and fix that first. If it reports non-conformant, read the counterexample it returns, fix the implementation for real and call `check` again. Repeat until conformant - never adjust the specification to make a failing implementation pass; if the rule itself turns out to be wrong, go back to step 2 and 3 with the user, then get it re-signed.
 
+   Always pass `produced_by` with your own model family, stated truthfully (`anthropic`, `openai`, `google`, ...): it is recorded with the evidence, and nothing else in this flow can know who wrote the code. A passing `check` also draws hidden random cases and reports a running count (for example `40/100 failure-free hidden cases`); a rule reaches Thesis only when that count is met, so one conformant check is not the end state. If the report says hidden sampling was skipped because a concept declares no domain, that is a gap in the specification - take it back to the user (a `range` for a decimal, a `one_of` for a text), never invent one yourself after signing.
+
 8. **Report the final state.** Call `status` on the file and summarize it for the user: signed by whom, and each hypothesis/law's own checked state.
 
 ## Everything else this server exposes (all pure reads, call anytime)

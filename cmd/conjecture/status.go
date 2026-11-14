@@ -1,8 +1,10 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"github.com/farlleyferreira/conjecture-ai/internal/contextengine"
 	"io"
 	"io/fs"
 	"os"
@@ -67,6 +69,11 @@ type Status struct {
 	// silently dropped, the same honesty discipline every other
 	// command in this codebase already follows.
 	Notes []string `json:"notes,omitempty"`
+	// Progress is, per hypothesis or law with any recorded run, how far
+	// its hidden-case evidence has got toward each promotion - the
+	// numbers "conjecture promote" itself measures, so nobody has to
+	// run it to find out what is still missing.
+	Progress []string `json:"progress,omitempty"`
 }
 
 // runStatus implements "conjecture status [file.cjtr]" - a pure read:
@@ -185,7 +192,58 @@ func computeStatus(db *sql.DB, f loadedFicha) (Status, error) {
 			return Status{}, err
 		}
 	}
+	progress, err := hiddenProgress(db, f)
+	if err != nil {
+		return Status{}, err
+	}
+	out.Progress = progress
 	return out, nil
+}
+
+// hiddenProgress reports, for every hypothesis and law in f with at
+// least one recorded run against the current text of the
+// specification, the best failure-free hidden-case count any one code
+// version has reached, how many code versions meet the required count
+// (Law needs two), and which declared model families do (Theory needs
+// two).
+func hiddenProgress(db *sql.DB, f loadedFicha) ([]string, error) {
+	if err := evidenceledger.EnsureRunSchema(db); err != nil {
+		return nil, err
+	}
+	if err := contextengine.EnsureSchema(db); err != nil {
+		return nil, err
+	}
+	specVersion := fmt.Sprintf("%x", sha256.Sum256(f.raw))
+	lawIDs := lawCompositeIDs(f)
+
+	var lines []string
+	for _, id := range allHypothesisIDs(f) {
+		runs, err := evidenceledger.Runs(db, id)
+		if err != nil {
+			return nil, err
+		}
+		measured := evidenceledger.Measure(runs, specVersion)
+		if len(measured.FailureFreeByCode) == 0 {
+			continue
+		}
+		weight, err := hypothesisWeight(db, id, lawIDs[id])
+		if err != nil {
+			return nil, err
+		}
+		best := 0
+		for _, n := range measured.FailureFreeByCode {
+			if n > best {
+				best = n
+			}
+		}
+		families := "none declared"
+		if qualified := measured.QualifiedFamilies(weight); len(qualified) > 0 {
+			families = strings.Join(qualified, ", ")
+		}
+		lines = append(lines, fmt.Sprintf("%s: hidden cases %d/%d (%s weight); code versions meeting it: %d; model families meeting it: %s",
+			id, best, weight.RequiredCases(), weight, len(measured.QualifiedCodeVersions(weight)), families))
+	}
+	return lines, nil
 }
 
 func statusEntryFor(db *sql.DB, compositeID string, h cjtr.Hypothesis, isLaw bool) (StatusEntry, error) {
@@ -248,6 +306,10 @@ func printStatus(stdout io.Writer, s Status) {
 			_, _ = fmt.Fprintf(stdout, " law_status=%s", e.LawStatus)
 		}
 		_, _ = fmt.Fprintln(stdout)
+	}
+
+	for _, line := range s.Progress {
+		_, _ = fmt.Fprintln(stdout, line)
 	}
 
 	for _, n := range s.Notes {
