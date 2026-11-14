@@ -5,6 +5,13 @@
 
 * bootstrap OpenSpec capability baseline for conjecture ([#15](https://github.com/farlleyferreira/conjecture-ai/issues/15)) ([fdc440d](https://github.com/farlleyferreira/conjecture-ai/commit/fdc440d4d33e43968e4aeea33b23fd7c8f013951))
 
+## [1.3.1](https://github.com/farlleyferreira/conjecture-ai/compare/v1.3.0...v1.3.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **check:** skip cases a rule with no "otherwise" does not apply to ([#181](https://github.com/farlleyferreira/conjecture-ai/issues/181)) ([7dec982](https://github.com/farlleyferreira/conjecture-ai/commit/7dec9827f9691dca3df59c3a8c6d16a7cbecb7a0))
+
 ## [1.3.0](https://github.com/farlleyferreira/conjecture-ai/compare/v1.2.0...v1.3.0) (2026-11-14)
 
 
