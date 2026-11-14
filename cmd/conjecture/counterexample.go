@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -20,18 +21,16 @@ import (
 // bindings is printed as Go prints it, unchanged - a shape this
 // function does not recognize is still shown, never dropped.
 func formatCounterexample(value any) string {
-	bindings := map[string]string{}
-	switch v := value.(type) {
-	case map[string]string:
-		for k, val := range v {
-			bindings[k] = val
-		}
-	case map[string]any:
-		for k, val := range v {
-			bindings[k] = fmt.Sprint(val)
-		}
-	default:
+	// Reflection, not a type switch: the value conformance-cycle hands
+	// back is a named map type (cjtr.Bindings), which a switch on
+	// map[string]string does not match.
+	rv := reflect.ValueOf(value)
+	if !rv.IsValid() || rv.Kind() != reflect.Map || rv.Type().Key().Kind() != reflect.String {
 		return fmt.Sprint(value)
+	}
+	bindings := make(map[string]string, rv.Len())
+	for iter := rv.MapRange(); iter.Next(); {
+		bindings[iter.Key().String()] = fmt.Sprint(iter.Value().Interface())
 	}
 
 	var inputs, outputs, other []string
@@ -58,4 +57,20 @@ func formatCounterexample(value any) string {
 	default:
 		return strings.Join(inputs, ", ") + " -> " + strings.Join(outputs, ", ")
 	}
+}
+
+// indentOutput joins a crashed implementation's stdout and stderr,
+// trimmed and indented, for printing under the line that reports the
+// crash. Output with nothing in it says so rather than printing a
+// blank block.
+func indentOutput(stdout, stderr []byte) string {
+	text := strings.TrimSpace(strings.TrimSpace(string(stdout)) + "\n" + strings.TrimSpace(string(stderr)))
+	if text == "" {
+		return "    (no output)"
+	}
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = "    " + strings.TrimRight(line, "\r")
+	}
+	return strings.Join(lines, "\n")
 }

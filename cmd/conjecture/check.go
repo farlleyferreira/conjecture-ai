@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
@@ -15,6 +16,7 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/contextcomposition"
 	"github.com/farlleyferreira/conjecture-ai/internal/contextengine"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
+	"github.com/farlleyferreira/conjecture-ai/internal/langtarget"
 	"github.com/farlleyferreira/conjecture-ai/internal/omissiondetection"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/sandbox"
@@ -24,7 +26,67 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 )
 
-const checkUsage = "usage: conjecture check <file.cjtr> <docker-image> <command...>"
+const checkUsage = "usage: conjecture check <file.cjtr> --lang <language> --entry <entry> [--src <dir>] [--image <image>]\n" +
+	"       conjecture check <file.cjtr> <docker-image> <command...>"
+
+// checkRequest is "conjecture check"'s own parsed arguments, in
+// either of its two forms: a language target (lang and entry set -
+// conjecture writes the adapter and picks the image, see
+// internal/langtarget), or the original image-plus-command form
+// (image and command set - the caller built an image that already
+// follows the conjecture_input.json/conjecture_output.json
+// convention).
+type checkRequest struct {
+	path string
+
+	lang, entry, src string
+
+	image   string
+	command []string
+}
+
+// parseCheckArgs reads "conjecture check"'s arguments. The two forms
+// are told apart by what follows the file: a flag means a language
+// target, anything else is an image name.
+func parseCheckArgs(args []string) (checkRequest, bool) {
+	if len(args) < 2 {
+		return checkRequest{}, false
+	}
+	req := checkRequest{path: args[0]}
+	rest := args[1:]
+	if !strings.HasPrefix(rest[0], "--") {
+		if len(rest) < 2 {
+			return checkRequest{}, false
+		}
+		req.image, req.command = rest[0], rest[1:]
+		return req, true
+	}
+
+	req.src = "."
+	for i := 0; i < len(rest); i++ {
+		flag := rest[i]
+		i++
+		if i >= len(rest) {
+			return checkRequest{}, false
+		}
+		switch flag {
+		case "--lang":
+			req.lang = rest[i]
+		case "--entry":
+			req.entry = rest[i]
+		case "--src":
+			req.src = rest[i]
+		case "--image":
+			req.image = rest[i]
+		default:
+			return checkRequest{}, false
+		}
+	}
+	if req.lang == "" || req.entry == "" {
+		return checkRequest{}, false
+	}
+	return req, true
+}
 
 // lawContestedThreshold is recordEvidence's own default for
 // [userdefinedlaws.MeetsContestedThreshold]'s "configurable threshold"
@@ -72,11 +134,12 @@ const maxTypeCKeyValuesPerConcept = 500
 // needs its own design (a target-language decision, a new LLM prompt/
 // role), left for a following change.
 func runCheck(args []string, stdout, stderr io.Writer) int {
-	if len(args) < 3 {
+	req, ok := parseCheckArgs(args)
+	if !ok {
 		_, _ = fmt.Fprintln(stderr, checkUsage)
 		return 1
 	}
-	path, image, command := args[0], args[1], args[2:]
+	path, image, command := req.path, req.image, req.command
 
 	f, err := loadFicha(path)
 	if err != nil {
@@ -126,6 +189,30 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 
 	sb := &sandbox.Sandbox{}
 	ctx := context.Background()
+	if req.lang != "" {
+		prepared, err := langtarget.Prepare(ctx, sb, langtarget.Target{Lang: req.lang, Entry: req.entry, SrcDir: req.src, Image: req.image})
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+			return 1
+		}
+		defer prepared.Cleanup()
+		sb = &sandbox.Sandbox{Mounts: prepared.Mounts, Env: prepared.Env}
+		image, command = prepared.Image, prepared.Command
+	}
+	// A crash is recorded as non-conformance (conformance-cycle's own
+	// rule), but a person reading "non-conformant" needs to know the
+	// program never answered at all. The first crash's own output is
+	// printed once; repeating it for every generated case would bury
+	// the report.
+	crashReported := false
+	sb.OnFailure = func(result sandbox.Result) {
+		if crashReported {
+			return
+		}
+		crashReported = true
+		_, _ = fmt.Fprintf(stdout, "%s: the implementation exited with code %d instead of answering - counted as non-conformant. Its output:\n%s\n",
+			f.phenomenonID, result.ExitCode, indentOutput(result.Stdout, result.Stderr))
+	}
 	exitCode := 0
 
 	// omission-detection's "Type C - case not specified" (decision-

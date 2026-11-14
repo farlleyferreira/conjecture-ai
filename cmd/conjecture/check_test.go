@@ -713,3 +713,38 @@ func TestRecordEvidence_ConformantCarriesPriorStageForward(t *testing.T) {
 		t.Errorf("Stage = %v, want %v carried forward unchanged (promotion not implemented)", history[1].Stage, evidenceledger.Theory)
 	}
 }
+
+func TestParseCheckArgs(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		ok   bool
+		want checkRequest
+	}{
+		{"image and command", []string{"f.cjtr", "img:1", "python3", "a.py"}, true,
+			checkRequest{path: "f.cjtr", image: "img:1", command: []string{"python3", "a.py"}}},
+		{"language target", []string{"f.cjtr", "--lang", "go", "--entry", "./p:F"}, true,
+			checkRequest{path: "f.cjtr", lang: "go", entry: "./p:F", src: "."}},
+		{"language target with source and image", []string{"f.cjtr", "--entry", "m:f", "--lang", "py", "--src", "svc", "--image", "x:2"}, true,
+			checkRequest{path: "f.cjtr", lang: "py", entry: "m:f", src: "svc", image: "x:2"}},
+		{"file only", []string{"f.cjtr"}, false, checkRequest{}},
+		{"image without a command", []string{"f.cjtr", "img:1"}, false, checkRequest{}},
+		{"language without an entry", []string{"f.cjtr", "--lang", "go"}, false, checkRequest{}},
+		{"flag without a value", []string{"f.cjtr", "--lang", "go", "--entry"}, false, checkRequest{}},
+		{"unknown flag", []string{"f.cjtr", "--lang", "go", "--entry", "x:Y", "--fast", "1"}, false, checkRequest{}},
+	}
+	for _, c := range cases {
+		got, ok := parseCheckArgs(c.args)
+		if ok != c.ok {
+			t.Errorf("%s: parseCheckArgs ok = %v, want %v", c.name, ok, c.ok)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		if got.path != c.want.path || got.lang != c.want.lang || got.entry != c.want.entry || got.src != c.want.src ||
+			got.image != c.want.image || strings.Join(got.command, " ") != strings.Join(c.want.command, " ") {
+			t.Errorf("%s: parseCheckArgs = %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}

@@ -79,6 +79,32 @@ type Sandbox struct {
 	// hook (a real caller has Docker on its PATH; this package does not
 	// install or locate it).
 	DockerBinary string
+	// Mounts are extra host directories every Run mounts into the
+	// container besides opts.Dir - how a language target
+	// (internal/langtarget) gives the implementation under test its
+	// own source tree and its generated adapter without copying
+	// either into opts.Dir for every single case.
+	Mounts []Mount
+	// Env are extra "NAME=value" environment variables every Run sets
+	// inside the container.
+	Env []string
+	// OnFailure, when set, is called with the result of every run that
+	// exits non-zero on its own (not a timeout). conformance-cycle
+	// reads a non-zero exit as non-conformance and keeps only that
+	// verdict; this is how a caller can still show a person why the
+	// implementation crashed, instead of a bare "non-conformant".
+	OnFailure func(Result)
+}
+
+// Mount is one extra host directory mounted into the container.
+type Mount struct {
+	// Host is the directory on this machine; Container is the absolute
+	// path it appears at inside the container.
+	Host, Container string
+	// ReadOnly mounts it read-only - the right choice for a project's
+	// own source tree, which a conformance check has no business
+	// writing to.
+	ReadOnly bool
 }
 
 // RuntimeEnvVar names the environment variable that picks the
@@ -121,7 +147,7 @@ func (s *Sandbox) Run(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	name := containerName()
-	args := buildDockerArgs(opts, name)
+	args := buildDockerArgs(opts, name, s.Mounts, s.Env)
 
 	cmd := exec.CommandContext(ctx, binary, args...)
 	var stdout, stderr bytes.Buffer
@@ -139,7 +165,11 @@ func (s *Sandbox) Run(ctx context.Context, opts Options) (Result, error) {
 	if runErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(runErr, &exitErr) {
-			return Result{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ExitCode: exitErr.ExitCode()}, nil
+			result := Result{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ExitCode: exitErr.ExitCode()}
+			if s.OnFailure != nil {
+				s.OnFailure(result)
+			}
+			return result, nil
 		}
 		return Result{}, fmt.Errorf("sandbox: running %s: %w", binary, runErr)
 	}
@@ -154,15 +184,25 @@ func (s *Sandbox) Run(ctx context.Context, opts Options) (Result, error) {
 // own filesystem layer once it exits on its own (a path "docker kill"
 // does not need to duplicate - killing a "--rm" container still
 // triggers its removal).
-func buildDockerArgs(opts Options, containerName string) []string {
+func buildDockerArgs(opts Options, containerName string, mounts []Mount, env []string) []string {
 	args := []string{
 		"run", "--rm",
 		"--network", "none",
 		"--name", containerName,
 		"-v", opts.Dir + ":/workspace",
 		"-w", "/workspace",
-		opts.Image,
 	}
+	for _, m := range mounts {
+		spec := m.Host + ":" + m.Container
+		if m.ReadOnly {
+			spec += ":ro"
+		}
+		args = append(args, "-v", spec)
+	}
+	for _, e := range env {
+		args = append(args, "-e", e)
+	}
+	args = append(args, opts.Image)
 	return append(args, opts.Command...)
 }
 

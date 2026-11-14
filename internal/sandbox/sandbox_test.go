@@ -57,7 +57,7 @@ func goBinary() string {
 }
 
 func TestBuildDockerArgs_NetworkNoneAndMountShape(t *testing.T) {
-	args := buildDockerArgs(Options{Image: "python:3.12-slim", Dir: "/tmp/work", Command: []string{"python3", "test.py"}}, "my-container")
+	args := buildDockerArgs(Options{Image: "python:3.12-slim", Dir: "/tmp/work", Command: []string{"python3", "test.py"}}, "my-container", nil, nil)
 
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "--network none") {
@@ -243,5 +243,27 @@ func TestResolveRuntime(t *testing.T) {
 		if got := resolveRuntime(c.override, onPath(c.present...)); got != c.want {
 			t.Errorf("%s: resolveRuntime = %q, want %q", c.name, got, c.want)
 		}
+	}
+}
+
+func TestBuildDockerArgs_ExtraMountsAndEnvComeBeforeTheImage(t *testing.T) {
+	args := buildDockerArgs(
+		Options{Image: "python:3-slim", Dir: "/tmp/work", Command: []string{"python3", "a.py"}},
+		"c",
+		[]Mount{{Host: "/home/me/project", Container: "/src", ReadOnly: true}, {Host: "/tmp/adapter", Container: "/adapter"}},
+		[]string{"PYTHONPATH=/src"},
+	)
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"-v /home/me/project:/src:ro", "-v /tmp/adapter:/adapter", "-e PYTHONPATH=/src", "--network none"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("buildDockerArgs = %q, want it to contain %q", joined, want)
+		}
+	}
+	if strings.Contains(joined, "/tmp/adapter:/adapter:ro") {
+		t.Errorf("buildDockerArgs = %q, want the writable mount left writable", joined)
+	}
+	imageAt := strings.Index(joined, " python:3-slim ")
+	if imageAt < 0 || imageAt < strings.Index(joined, "-e PYTHONPATH=/src") {
+		t.Errorf("buildDockerArgs = %q, want every option before the image name", joined)
 	}
 }
