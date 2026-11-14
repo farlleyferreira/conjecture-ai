@@ -21,10 +21,6 @@
 // build consistently across all three supported OSes.
 package hardwarescheduler
 
-import (
-	"github.com/mackerelio/go-osstat/cpu"
-)
-
 // CPUBusyThreshold is this package's own disclosed default for how
 // busy counts as "busy" for [ShouldDeferHeavyWork]'s own userActive
 // signal - the specification names no concrete threshold, so this is
@@ -42,18 +38,6 @@ const CPUBusyThreshold = 0.70
 // without changing anything downstream.
 type CPUSample struct {
 	Idle, Total uint64
-}
-
-// CurrentCPUSample reads the machine's current cumulative CPU time.
-// Two samples taken some real time apart are needed to compute
-// busyness ([BusyFraction]) - a single sample alone, being a
-// cumulative counter since boot, says nothing about current load.
-func CurrentCPUSample() (CPUSample, error) {
-	s, err := cpu.Get()
-	if err != nil {
-		return CPUSample{}, err
-	}
-	return CPUSample{Idle: s.Idle, Total: s.Total}, nil
 }
 
 // BusyFraction reports the fraction of CPU time spent busy (not

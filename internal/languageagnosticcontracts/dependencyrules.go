@@ -1,3 +1,5 @@
+//go:build cgo
+
 // Package languageagnosticcontracts implements pieces of the
 // language-agnostic-contracts capability (openspec/specs/language-
 // agnostic-contracts/spec.md): "Read-only dependency analysis" (this
@@ -43,13 +45,10 @@ import (
 	"github.com/smacker/go-tree-sitter/golang"
 )
 
-// ForbiddenImportViolation is one declared import in a source file
-// whose path matches a caller-named forbidden import.
-type ForbiddenImportViolation struct {
-	ImportPath string
-	// Line is the import declaration's own 1-based source line.
-	Line int
-}
+// DependencyAnalysisAvailable reports whether this binary was built
+// with CGO, and so carries Tree-sitter's own C parsing engine - see
+// dependencyrules_nocgo.go for the other half of this pair.
+const DependencyAnalysisAvailable = true
 
 // goImportPathQuery is a Tree-sitter query (S-expression syntax) over
 // the Go grammar's own parse tree, capturing every import_spec's own

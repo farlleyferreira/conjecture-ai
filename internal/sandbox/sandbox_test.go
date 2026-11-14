@@ -216,3 +216,32 @@ func TestRun_DockerBinaryNotFoundIsError(t *testing.T) {
 		t.Fatal("Run with a nonexistent docker binary = nil error, want one")
 	}
 }
+
+func TestResolveRuntime(t *testing.T) {
+	onPath := func(present ...string) func(string) (string, error) {
+		return func(name string) (string, error) {
+			for _, p := range present {
+				if p == name {
+					return "/usr/bin/" + name, nil
+				}
+			}
+			return "", exec.ErrNotFound
+		}
+	}
+	cases := []struct {
+		name     string
+		override string
+		present  []string
+		want     string
+	}{
+		{"docker wins when both are installed", "", []string{"docker", "podman"}, "docker"},
+		{"podman is used when docker is absent", "", []string{"podman"}, "podman"},
+		{"docker is named when neither is installed", "", nil, "docker"},
+		{"the override wins over detection", "nerdctl", []string{"docker", "podman"}, "nerdctl"},
+	}
+	for _, c := range cases {
+		if got := resolveRuntime(c.override, onPath(c.present...)); got != c.want {
+			t.Errorf("%s: resolveRuntime = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
