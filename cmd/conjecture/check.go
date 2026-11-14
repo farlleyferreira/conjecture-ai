@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,8 +27,8 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 )
 
-const checkUsage = "usage: conjecture check <file.cjtr> --lang <language> --entry <entry> [--src <dir>] [--image <image>]\n" +
-	"       conjecture check <file.cjtr> <docker-image> <command...>"
+const checkUsage = "usage: conjecture check <file.cjtr> --lang <language> --entry <entry> [--src <dir>] [--image <image>] [--samples <N>] [--produced-by <family>]\n" +
+	"       conjecture check <file.cjtr> [--samples <N>] [--produced-by <family>] <docker-image> <command...>"
 
 // checkRequest is "conjecture check"'s own parsed arguments, in
 // either of its two forms: a language target (lang and entry set -
@@ -41,50 +42,72 @@ type checkRequest struct {
 
 	lang, entry, src string
 
+	// samples is how many hidden (random) cases to draw per
+	// hypothesis after its deterministic check passes; 0 turns hidden
+	// sampling off. producedBy is the declared model family (or
+	// "human") that wrote the implementation.
+	samples    int
+	producedBy string
+
 	image   string
 	command []string
 }
 
-// parseCheckArgs reads "conjecture check"'s arguments. The two forms
-// are told apart by what follows the file: a flag means a language
-// target, anything else is an image name.
+// parseCheckArgs reads "conjecture check"'s arguments: the file,
+// then any flags, then - only in the image form - the image and its
+// command. Flags stop at the first argument that is not one, so a
+// command's own flags ("python3 -u a.py") are never mistaken for
+// conjecture's. --lang selects the language-target form.
 func parseCheckArgs(args []string) (checkRequest, bool) {
 	if len(args) < 2 {
 		return checkRequest{}, false
 	}
-	req := checkRequest{path: args[0]}
+	req := checkRequest{path: args[0], src: ".", samples: defaultHiddenSamples}
 	rest := args[1:]
-	if !strings.HasPrefix(rest[0], "--") {
-		if len(rest) < 2 {
-			return checkRequest{}, false
-		}
-		req.image, req.command = rest[0], rest[1:]
-		return req, true
-	}
 
-	req.src = "."
-	for i := 0; i < len(rest); i++ {
+	i := 0
+	for i < len(rest) && strings.HasPrefix(rest[i], "--") {
 		flag := rest[i]
 		i++
 		if i >= len(rest) {
 			return checkRequest{}, false
 		}
+		value := rest[i]
+		i++
 		switch flag {
 		case "--lang":
-			req.lang = rest[i]
+			req.lang = value
 		case "--entry":
-			req.entry = rest[i]
+			req.entry = value
 		case "--src":
-			req.src = rest[i]
+			req.src = value
 		case "--image":
-			req.image = rest[i]
+			req.image = value
+		case "--produced-by":
+			req.producedBy = value
+		case "--samples":
+			n, err := strconv.Atoi(value)
+			if err != nil || n < 0 {
+				return checkRequest{}, false
+			}
+			req.samples = n
 		default:
 			return checkRequest{}, false
 		}
 	}
-	if req.lang == "" || req.entry == "" {
+	positional := rest[i:]
+
+	if req.lang != "" {
+		if req.entry == "" || len(positional) != 0 {
+			return checkRequest{}, false
+		}
+		return req, true
+	}
+	// The image form takes none of the language-target flags.
+	if req.entry != "" || req.image != "" || req.src != "." || len(positional) < 2 {
 		return checkRequest{}, false
 	}
+	req.image, req.command = positional[0], positional[1:]
 	return req, true
 }
 
@@ -166,6 +189,10 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
+	if err := evidenceledger.EnsureRunSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
 	if err := userdefinedlaws.EnsureSchema(db); err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
@@ -198,6 +225,17 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		defer prepared.Cleanup()
 		sb = &sandbox.Sandbox{Mounts: prepared.Mounts, Env: prepared.Env}
 		image, command = prepared.Image, prepared.Command
+	}
+
+	// What a run is tied to: in the language form, a hash of the
+	// project's own files; in the image form, the image's own id.
+	codeVersion := imageVersion(image)
+	if req.lang != "" {
+		codeVersion, err = sourceTreeVersion(req.src)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+			return 1
+		}
 	}
 	// A crash is recorded as non-conformance (conformance-cycle's own
 	// rule), but a person reading "non-conformant" needs to know the
@@ -251,9 +289,16 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	// [checkHypothesisConformance] so that, and only that, [recordEvidence]
 	// also updates user-defined-laws' own status lifecycle - a plain
 	// hypothesis has no such status to update.
+	hidden := hiddenRun{samples: req.samples, specVersion: specVersion, codeVersion: codeVersion, producerFamily: req.producedBy}
 	runGroup := func(hyps []cjtr.Hypothesis, compositeID string, isLaw bool) {
 		for _, h := range hyps {
-			if failed := checkHypothesisConformance(ctx, db, sb, image, command, h, compositeID, specVersion, isLaw, f.concepts, f.tables, stdout); failed {
+			failed := checkHypothesisConformance(ctx, db, sb, image, command, h, compositeID, specVersion, isLaw, f.concepts, f.tables, stdout)
+			recordDirectedRun(db, compositeID, h, hidden, !failed)
+			if failed {
+				exitCode = 1
+				continue
+			}
+			if sampleHiddenCases(ctx, db, sb, image, command, h, compositeID, hidden, isLaw, f.concepts, f.tables, stdout) {
 				exitCode = 1
 			}
 		}

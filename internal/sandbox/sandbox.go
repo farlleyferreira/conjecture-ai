@@ -133,6 +133,14 @@ func resolveRuntime(override string, lookPath func(string) (string, error)) stri
 	return "docker"
 }
 
+// Runtime returns the container runtime executable a zero-value
+// Sandbox invokes on this machine (see [resolveRuntime]) - for a
+// caller that needs to ask the same runtime something else, such as
+// an image's id.
+func Runtime() string {
+	return resolveRuntime(os.Getenv(RuntimeEnvVar), exec.LookPath)
+}
+
 // Run executes opts.Command inside a fresh, no-network Docker
 // container, mounting opts.Dir as its working directory. If ctx
 // carries a deadline and the command has not finished by then, Run
