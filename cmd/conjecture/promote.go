@@ -8,14 +8,15 @@ import (
 	"os"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
+	"github.com/farlleyferreira/conjecture-ai/internal/contextengine"
 	"github.com/farlleyferreira/conjecture-ai/internal/decisionledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/version"
 )
 
-const promoteUsage = "usage: conjecture promote theory <file.cjtr> [--mechanism-confirmed] [--different-family-reproduced] [--decided-by <name>]\n" +
-	"       conjecture promote law <file.cjtr> <hypothesis-id> [--hidden-samples-conformant] [--new-code-versions-conformant] [--decided-by <name>]"
+const promoteUsage = "usage: conjecture promote theory <file.cjtr> [--decided-by <name>]\n" +
+	"       conjecture promote law <file.cjtr> <hypothesis-id> [--decided-by <name>]"
 
 // promotionProducedBy is the [evidenceledger.Evidence.ProducedBy]
 // every record this command appends carries - an administrative
@@ -60,14 +61,13 @@ func runPromote(args []string, stdout, stderr io.Writer) int {
 // file/store - the thin, real-path wrapper around [promoteTheory].
 func runPromoteTheory(args []string, stdout, stderr io.Writer) int {
 	var path, decidedBy string
-	var mechanismConfirmed, differentFamilyReproduced bool
 	var positional []string
 	for i := 0; i < len(args); i++ {
+		if instead, removed := removedPromoteFlags[args[i]]; removed {
+			_, _ = fmt.Fprintf(stderr, "conjecture: %s is no longer accepted - this condition is measured from the ledger, not asserted. Instead: %s\n", args[i], instead)
+			return 1
+		}
 		switch args[i] {
-		case "--mechanism-confirmed":
-			mechanismConfirmed = true
-		case "--different-family-reproduced":
-			differentFamilyReproduced = true
 		case "--decided-by":
 			i++
 			if i >= len(args) {
@@ -106,7 +106,16 @@ func runPromoteTheory(args []string, stdout, stderr io.Writer) int {
 	}
 	defer func() { _ = db.Close() }()
 
-	return promoteTheory(db, f, mechanismConfirmed, differentFamilyReproduced, decidedBy, stdout, stderr)
+	measured, err := measureTheory(db, f)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	code := promoteTheory(db, f, measured.mechanismConfirmed, measured.differentFamilyReproduced, decidedBy, stdout, stderr)
+	for _, line := range measured.detail {
+		_, _ = fmt.Fprintf(stdout, "  - %s\n", line)
+	}
+	return code
 }
 
 // openPromoteStore opens the local, per-repository store, assuming
@@ -126,6 +135,14 @@ func openPromoteStore() (*sql.DB, error) {
 		return nil, err
 	}
 	if err := decisionledger.EnsureSchema(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := evidenceledger.EnsureRunSchema(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := contextengine.EnsureSchema(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -245,14 +262,13 @@ func allHypothesisIDs(f loadedFicha) []string {
 // file/store - the thin, real-path wrapper around [promoteLaw].
 func runPromoteLaw(args []string, stdout, stderr io.Writer) int {
 	var decidedBy string
-	var hiddenSamplesConformant, newCodeVersionsConformant bool
 	var positional []string
 	for i := 0; i < len(args); i++ {
+		if instead, removed := removedPromoteFlags[args[i]]; removed {
+			_, _ = fmt.Fprintf(stderr, "conjecture: %s is no longer accepted - this condition is measured from the ledger, not asserted. Instead: %s\n", args[i], instead)
+			return 1
+		}
 		switch args[i] {
-		case "--hidden-samples-conformant":
-			hiddenSamplesConformant = true
-		case "--new-code-versions-conformant":
-			newCodeVersionsConformant = true
 		case "--decided-by":
 			i++
 			if i >= len(args) {
@@ -291,7 +307,28 @@ func runPromoteLaw(args []string, stdout, stderr io.Writer) int {
 	}
 	defer func() { _ = db.Close() }()
 
-	return promoteLaw(db, f, hypothesisID, hiddenSamplesConformant, newCodeVersionsConformant, decidedBy, stdout, stderr)
+	_, compositeID, _, _, found := findHypothesisByID(f, hypothesisID)
+	if !found {
+		_, _ = fmt.Fprintf(stderr, "conjecture: no hypothesis with id %q in %s\n", hypothesisID, f.phenomenon)
+		return 1
+	}
+	measured, err := measureLaw(db, f, compositeID)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
+	if !measured.atTheory {
+		_, _ = fmt.Fprintf(stdout, "%s: not promoted to Law\n", compositeID)
+		for _, line := range measured.detail {
+			_, _ = fmt.Fprintf(stdout, "  - %s\n", line)
+		}
+		return 0
+	}
+	code := promoteLaw(db, f, hypothesisID, measured.hiddenSamplesConformant, measured.newCodeVersionsConformant, decidedBy, stdout, stderr)
+	for _, line := range measured.detail {
+		_, _ = fmt.Fprintf(stdout, "  - %s\n", line)
+	}
+	return code
 }
 
 // promoteLaw implements "conjecture promote law"'s own real logic
