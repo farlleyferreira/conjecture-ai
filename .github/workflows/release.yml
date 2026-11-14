@@ -16,6 +16,9 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  # Build provenance attestations for the release binaries.
+  id-token: write
+  attestations: write
 
 jobs:
   release-please:
@@ -105,5 +108,14 @@ jobs:
             shasum -a 256 "${asset}" > "${asset}.sha256"
           fi
           echo "ASSET=${asset}" >> "$GITHUB_ENV"
+      # Signs a statement that this exact file was built by this workflow
+      # from this commit. Anyone can check a download against it with
+      # "gh attestation verify <file> --repo farlleyferreira/conjecture-ai".
+      # It proves where the binary came from; it is not a Windows or
+      # macOS code signature and does not silence SmartScreen.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/${{ env.ASSET }}
       - name: Upload to the release
         run: gh release upload "$TAG" "dist/${ASSET}" "dist/${ASSET}.sha256" --clobber
