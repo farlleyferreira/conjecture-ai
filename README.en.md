@@ -8,6 +8,32 @@ code obeys it.**
 [![CI](https://github.com/farlleyferreira/conjecture-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/farlleyferreira/conjecture-ai/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+## The problem this actually solves
+
+AI agents already write specs, plans, code, and tests. Nobody can say how
+much to trust what comes out the other end. Every tool in this category
+chases quality by piling on more artifacts - more docs, more generated
+tests, more passes. Verification stays exactly the same: the model that
+wrote the thing is the one deciding whether it's good.
+
+Four causes keep showing up everywhere:
+
+- **Trust is binary and invisible.** It passes, or it doesn't. Nobody can
+  say what was actually covered and what was never touched.
+- **Whoever writes the code is whoever grades it.** Errors correlate with
+  each other, and the evidence can be shaped by the same hand that
+  produced it.
+- **The intent itself is never checked.** Only the artifacts derived from
+  it are - the spec you meant disappears the moment code gets written.
+- **Rigor scales with how big the change looks, not with how risky it
+  actually is.** One line in a billing calculation can matter more than a
+  thousand lines of admin screen.
+
+`conjecture` exists because nothing else ties a specific expected
+behavior to real, executable evidence - produced by a verifier the writer
+can't influence, with whatever stayed unverified left visible instead of
+quietly dropped.
+
 ## The simplest way to think about it
 
 Imagine a rule for a game: *"if you roll a 6, you get another turn."* You
@@ -116,15 +142,27 @@ $ conjecture sign --user alice --confirmed conjecture/phenomena/ticketing/ticket
 Write the rule once, point it at real code, get a real verdict - and a
 signed, attributable record that a human looked at it.
 
+## Two loops, so no model ever grades its own work
+
+`conjecture` runs on two loops, never one:
+
+1. **The spec loop.** You and the judge refine the `.cjtr` file - checking
+   it's falsifiable, consistent, complete, and free of hidden assumptions
+   - until it's accepted and signed. Nothing gets frozen until it survives
+   this on its own, before any implementation exists.
+2. **The conformance loop.** An LLM writes or fixes the implementation; a
+   separate judge checks it against the frozen spec, round after round,
+   until it conforms or the budget runs out. The implementing model never
+   sees the hidden cases it's judged against, never talks to the judge
+   directly, and can't sign anything on your behalf.
+
+`conjecture` never writes the application code itself. It produces
+mutated concepts, test cases, and verdicts - the implementing model (you,
+or an LLM) still has to do the actual work, and still has to answer to a
+verifier it doesn't control.
+
 ## Why `conjecture`
 
-- **A signed spec is frozen before code is judged.** Once you sign a
-  `.cjtr` file, the judge checks implementation code only against that
-  exact frozen rule - nobody can quietly move the goalposts mid-check.
-- **The model that writes the code never grades its own homework.**
-  Drafting and implementing always run in separate sessions. Neither one
-  can see the hidden cases the judge uses, call the judge directly, or
-  sign anything on your behalf.
 - **An independent model actively tries to break your rule.** One local
   adversarial SLM by default, or a swarm of at least five distinct
   attack strategies, with budget allocated between them by a bandit -
