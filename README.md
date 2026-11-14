@@ -2,59 +2,58 @@
 
 # conjecture-ai
 
-**Escreva uma regra em palavras simples. O `conjecture` prova, de verdade,
-se seu código obedece a ela.**
+**Seu agente disse "pronto". O `conjecture` tenta derrubar o que ele
+escreveu, usando uma regra que você aprovou, e mostra a entrada exata
+que quebrou.**
 
 [![CI](https://github.com/farlleyferreira/conjecture-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/farlleyferreira/conjecture-ai/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-## O problema que isso resolve de verdade
+> **Projeto experimental.** Ninguém usou isto ainda para decidir algo
+> sobre código do qual dependa. Leia [Limites](#limites) antes de confiar.
 
-Agentes de IA já escrevem spec, plano, código e teste. Ninguém consegue
-dizer o quanto confiar no que sai do outro lado. Toda ferramenta dessa
-categoria busca qualidade empilhando mais artefato - mais doc, mais teste
-gerado, mais passada. A verificação continua exatamente igual: o próprio
-modelo que escreveu decide se ficou bom.
+## Em 30 segundos
 
-Quatro causas se repetem em todo lugar:
+A regra: *"Economy Flex remarcada com 24h ou mais de antecedência não
+paga taxa. O resto paga."*
 
-- **Confiança binária e invisível.** Passou, ou não passou. Ninguém sabe
-  o que de fato foi coberto e o que nunca foi tocado.
-- **Quem produz é quem avalia.** Erros se correlacionam entre si, e a
-  evidência pode ser moldada pela mesma mão que produziu.
-- **A intenção em si nunca é checada.** Só os artefatos derivados dela
-  são - a spec que você quis desaparece no momento em que o código é
-  escrito.
-- **Rigor escala com o tamanho aparente da mudança, não com o risco
-  real.** Uma linha num cálculo de cobrança pode importar mais que mil
-  linhas de tela administrativa.
+O agente entregou isto e disse que terminou:
 
-O `conjecture` existe porque nada mais liga um comportamento esperado
-específico a evidência real e executável - produzida por um verificador
-que quem escreveu não consegue influenciar, com o que ficou sem
-verificação visível, nunca descartado em silêncio.
+```python
+hours = float(data["input.hours_before_departure"])
+fee = "0.00" if hours >= 24.00 else "150.00"
+```
 
-## A forma mais simples de pensar nisso
+O `conjecture` monta casos a partir da regra, roda o programa num
+container sem rede e responde:
 
-Imagine uma regra de um jogo: *"se você tirar 6, joga de novo."* Você não
-precisa ler o manual inteiro pra saber se isso é verdade - só precisa
-jogar, tirar um 6, e ver o que acontece.
+```
+$ conjecture check conjecture/phenomena/ticketing/ticket-change-fee.cjtr ticket-fee-demo:latest python3 /work/adapter.py
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: judge: accepted
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: conformance (directed sampling): non-conformant
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free:   counterexample: map[input.fare_class:economy-basic input.hours_before_departure:30.00 output.change_fee:0.00]
+```
 
-O `conjecture` faz isso com regras de software. Você escreve a regra uma
-vez, em palavras simples, num arquivo pequeno - sem código. O `conjecture`
-então joga o jogo por você: monta casos de teste reais a partir da sua
-regra, executa seu programa *de verdade* contra eles dentro de uma sandbox
-isolada, e te diz **conformant** (a regra se sustenta) ou **non-conformant**
-(aqui está a entrada exata que quebrou). Ele nunca confia na palavra do
-código. Ele sempre observa o que o código realmente faz.
+Uma Economy Basic com 30 horas de antecedência saiu de graça: o código
+esqueceu a classe da tarifa. Depois da correção:
 
-## Diga uma vez, em palavras simples
+```
+$ conjecture check conjecture/phenomena/ticketing/ticket-change-fee.cjtr ticket-fee-demo:latest python3 /work/adapter.py
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: judge: accepted
+ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: conformance (directed sampling): conformant
 
-Aqui está uma política real de companhia aérea: *"passagens Economy Flex
-remarcadas com pelo menos 24 horas de antecedência não pagam taxa; o
-resto paga."* Normalmente a única forma de saber se seu código realmente
-faz isso é ler o código, ou escrever um teste unitário na mão e esperar
-ter pensado nos casos certos.
+$ conjecture status conjecture/phenomena/ticketing/ticket-change-fee.cjtr
+ticketing::ticket-change-fee: not signed
+ticketing::ticket-change-fee::flex-fee-waiver::flex-inside-window: stage=Hypothesis attacked="directed sampling" survived="every generated case conformed"
+```
+
+O `status` não diz "aprovado". Diz o que foi atacado, o que resistiu, em
+que estágio a regra está e que nenhum humano assinou ainda.
+
+<details>
+<summary>A regra como arquivo <code>.cjtr</code></summary>
+
+É YAML numa gramática restrita. Seu agente escreve, você revisa e assina.
 
 ```yaml
 # conjecture/phenomena/ticketing/ticket-change-fee.cjtr
@@ -85,20 +84,22 @@ rules:
           - {hours before departure: 30.00, fare class: economy-basic, change fee: 150.00}
 ```
 
-Só isso. Sem código. Só a regra, em palavras que até alguém que não
-programa conseguiria ler em voz alta.
+</details>
 
-## Veja ele pegar um bug real
+<details>
+<summary>O programa completo e o container da demonstração</summary>
 
-Aqui está uma "implementação" com um bug real: ela esquece de checar a
-classe da tarifa e só olha quantas horas faltam.
+O `conjecture` não lê seu código. Ele grava `conjecture_input.json`,
+executa o comando que você indicar dentro da imagem e lê
+`conjecture_output.json`.
 
 ```python
-# adapter.py
+# adapter.py - versão corrigida
 import json
 data = json.load(open("conjecture_input.json"))
 hours = float(data["input.hours_before_departure"])
-fee = "0.00" if hours >= 24.00 else "150.00"
+fare_class = data["input.fare_class"]
+fee = "0.00" if (fare_class == "economy-flex" and hours >= 24.00) else "150.00"
 json.dump({"output.change_fee": fee}, open("conjecture_output.json", "w"))
 ```
 
@@ -108,226 +109,171 @@ WORKDIR /work
 COPY adapter.py /work/adapter.py
 ```
 
-```
-$ podman build -t ticket-fee-demo:latest .
-$ conjecture check conjecture/phenomena/ticketing/ticket-change-fee.cjtr ticket-fee-demo:latest python3 /work/adapter.py
-ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: judge: accepted
-ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: conformance (directed sampling): non-conformant
-ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free:   counterexample: map[input.fare_class:economy-basic input.hours_before_departure:30.00 output.change_fee:0.00]
-```
-
-Pego de verdade - uma passagem Economy Basic remarcada com 30 horas de
-antecedência devia pagar a taxa, e essa implementação dispensa a taxa só
-porque sobraram horas suficientes. Corrija o bug de verdade:
-
-```python
-# adapter.py
-import json
-data = json.load(open("conjecture_input.json"))
-hours = float(data["input.hours_before_departure"])
-fare_class = data["input.fare_class"]
-fee = "0.00" if (fare_class == "economy-flex" and hours >= 24.00) else "150.00"
-json.dump({"output.change_fee": fee}, open("conjecture_output.json", "w"))
-```
-
-```
-$ podman build -t ticket-fee-demo:latest .
-$ conjecture check conjecture/phenomena/ticketing/ticket-change-fee.cjtr ticket-fee-demo:latest python3 /work/adapter.py
-ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: judge: accepted
-ticketing::ticket-change-fee::flex-fee-waiver: flex fare inside window is free: conformance (directed sampling): conformant
-
-$ conjecture sign --user alice --confirmed conjecture/phenomena/ticketing/ticket-change-fee.cjtr
-```
-
-Escreva a regra uma vez, aponte pro código real, receba um veredito real -
-e um registro assinado e atribuível de que um humano olhou pra isso.
-
-## Dois laços, pra nenhum modelo corrigir a própria prova
-
-O `conjecture` roda em dois laços, nunca um só:
-
-1. **O laço da especificação.** Você e o juiz refinam o arquivo `.cjtr` -
-   checando se é falseável, consistente, completo e livre de pressupostos
-   escondidos - até ser aceito e assinado. Nada congela até sobreviver a
-   isso por conta própria, antes de qualquer implementação existir.
-2. **O laço de conformidade.** Uma LLM escreve ou corrige a implementação;
-   um juiz separado checa contra a spec congelada, rodada após rodada,
-   até ela estar conforme ou o orçamento acabar. O modelo que implementa
-   nunca vê os casos ocultos contra os quais é julgado, nunca fala com o
-   juiz direto, e não consegue assinar nada em seu nome.
-
-O `conjecture` nunca escreve o código da aplicação em si. Ele produz
-mutações do conceito, casos de teste como dados, e vereditos - quem
-implementa (você, ou uma LLM) ainda tem que fazer o trabalho real, e
-ainda tem que responder a um verificador que não controla.
-
-## Por que o `conjecture`
-
-- **Um modelo independente tenta ativamente quebrar sua regra.** Um SLM
-  adversarial local por padrão, ou um swarm de pelo menos cinco
-  estratégias de ataque distintas, com o orçamento alocado entre elas
-  por bandit - caçando o contraexemplo que você não pensou, nunca
-  colaborando ou debatendo entre si.
-- **Subir a escada de maturidade exige mais que "passou uma vez".**
-  De Thesis pra Theory: uma segunda implementação, de uma família de
-  modelo diferente da original, reproduzindo o resultado, mais robustez
-  contra o swarm inteiro. De Theory pra Law: conformidade contra amostras
-  ocultas e através de novas versões do código. Evidência se acumula
-  numa escada real (Hypothesis → Thesis → Theory → Law), nunca um
-  pass/fail binário.
-- **Peso, relevância e confiança são três eixos independentes, nunca
-  multiplicados entre si.** Dinheiro, identidade, permissões e dados
-  pessoais entram automaticamente como peso alto - e esse peso nunca é
-  auto-otimizado pelo próprio sistema, de propósito.
-- **Bases de conhecimento citam autoridade real.** Norma, definição,
-  referência ou histórico - quatro níveis, não uma lista plana de links -
-  então uma decisão pode apontar pra algo além do próprio `.cjtr`.
-- **Todo contexto de verificação é versionado e retomável.** Liste,
-  reabra uma versão passada exata, compare duas versões, ou restaure uma
-  - nada de onde você parou precisa ser reconstruído de memória.
-- **Funciona com a linguagem que você já tem.** O `conjecture` observa seu
-  programa real só através de um contrato declarado de entrada/saída,
-  nunca entendendo a semântica da sua linguagem.
-- **Auto-ajuste fica sempre na coleira.** As únicas coisas que o
-  `conjecture` pode otimizar sobre si mesmo - geração de entrada,
-  orçamento do swarm, calibração - todas exigem seu `--approved` explícito
-  antes de qualquer mudança.
-
-## Começo rápido
-
-> [!NOTE]
-> Ainda não existe um download pronto - você mesmo compila o único
-> binário. É um comando só, e é o mesmo comando em qualquer sistema.
-
-Este repositório tem exatamente uma dependência CGO
-(`github.com/smacker/go-tree-sitter`, usada pra análise de dependências),
-então o binário precisa de um compilador C real pra qualquer sistema em
-que for compilado:
-
 ```bash
-CGO_ENABLED=1 go build -o conjecture ./cmd/conjecture
+podman build -t ticket-fee-demo:latest .
 ```
-
-- **Linux/macOS**: funciona direto se `gcc`/`clang` estiver instalado.
-- **Windows**: não existe gcc nativo. Compile dentro do WSL2 (instale
-  `golang-go` e `gcc` lá), ou dentro de um container `golang` via
-  Podman/Docker:
-  ```bash
-  podman run --rm -v "$(pwd):/src" -w /src golang:1.25 \
-    go build -o conjecture ./cmd/conjecture
-  ```
-
-Você também precisa de **um runtime de container no `PATH` chamado
-`docker`** - `conjecture check`/`implement`/`work` executam a implementação
-testada dentro de um container com `--network none`. Docker real funciona
-direto; Podman real funciona por trás de um shim de uma linha (`docker`
-não vem apontado pra ele por padrão):
-
-```bash
-printf '#!/bin/sh\nexec podman "$@"\n' | sudo tee /usr/local/bin/docker
-sudo chmod +x /usr/local/bin/docker
-```
-
-Depois:
-
-```bash
-conjecture init   # cria conjecture/phenomena/, conjecture/materializations/, .conjecture/
-```
-
-Escreva uma regra, rode `conjecture check` contra seu código real - esse é
-todo o exemplo prático acima, do início ao fim.
-
-> [!NOTE]
-> `conjecture check`/`verify`/`sign`/`promote`/`context` não precisam de
-> LLM nenhum - eles só executam regras já escritas contra código já
-> escrito. Só `draft`/`implement`/`work`/`attack`/`swarm` precisam de um, e
-> trocar de provedor é só uma flag `--provider` mais a API key daquele
-> provedor - nunca muda código. Configure um destes: `ANTHROPIC_API_KEY`
-> (provedor `anthropic`, o padrão), `DEEPSEEK_API_KEY` (provedor
-> `deepseek`), um `ollama serve`/`llama-server` local (provedor
-> `llamacpp`, sem key necessária), ou qualquer provedor que fale o formato
-> Chat Completions da OpenAI - verificado contra nove: `openai`, `gemini`,
-> `grok`, `llama-api` (API hospedada da Meta, diferente do `llamacpp`
-> local), `mistral`, `cohere`, `bedrock`, `azure-openai`, `dashscope`
-> (serve Qwen) - cada um só com suas próprias env vars, listadas em
-> [`internal/llmclient/openaicompatible.go`](internal/llmclient/openaicompatible.go).
-
-## Comandos
-
-| Comando | Faz |
-|---|---|
-| `init` | Cria a estrutura do repositório (`conjecture/phenomena/`, `conjecture/materializations/`, `.conjecture/` no gitignore). |
-| `draft` | Pede a um LLM pra rascunhar um spec `.cjtr` a partir de um pedido em linguagem natural. |
-| `sign` | Registra autoria/confirmação num arquivo `.cjtr`; `--confirmed` também registra uma entrada real no ledger de decisões. |
-| `verify` | Checa os exemplos próprios de um spec contra suas próprias hipóteses - sem sandbox, sem implementação. |
-| `check` | Executa o ciclo de conformidade por amostragem direcionada de uma hipótese contra uma implementação real em sandbox. |
-| `implement` / `work` | Pede a um LLM pra escrever/corrigir código de implementação até ficar conforme (ou o orçamento de rodadas acabar); `work` consome da fila em vez de receber um arquivo direto. |
-| `attack` / `swarm` | Executa um ou vários ataques adversariais de LLM contra uma hipótese, procurando um contraexemplo. |
-| `promote` | Promove uma hipótese/law pra Theory ou Law quando suas condições reais de evidência se cumprem; registra uma entrada no ledger de decisões. |
-| `law` | Resolve um conflito entre uma law definida pelo usuário e uma prova formal ou outra law. |
-| `context` | `list`/`resume`/`open`/`origin`/`diff`/`restore`/`resolve-conflict` sobre um contexto de verificação salvo. |
-| `base` | Conecta/busca uma base de conhecimento (normas, definições, referências) com escopo de projeto ou área. |
-| `queue` | A fila de trabalho de três níveis (blocker/current-task/background) que `work` consome; `review` lista itens que não puderam ser tratados automaticamente. |
-| `results` | Importa resultados já produzidos em JUnit XML ou TAP de um sistema alvo. |
-| `graph` | Lê/define peso/relevância/confiança de um nó do motor de contexto. |
-| `optimize` | Aplica uma proposta de calibração - sempre exige `--approved` explícito. |
-| `settings` | Checa um valor contra um piso configurado pelo time (nunca um teto). |
-| `translate` | Gera o comentário determinístico `# pt:` de uma hipótese. |
-| `deps` | Checa código Go por imports proibidos. |
-| `watch` | Monitora um diretório e reverifica qualquer arquivo `.cjtr` que mudar. |
-| `mcp` | Executa o conjecture como um servidor MCP. |
-
-Rode qualquer comando sem argumentos (ou qualquer bobagem no formato
-`--help`) pra ver sua própria string de uso real.
-
-<details>
-<summary><strong>Escopo e limites</strong> - leia antes de confiar nisso pra algo que importa</summary>
-
-O núcleo de verificação (check → attack/swarm → promote, execução em
-sandbox, o ledger de decisões, o conjunto completo de comandos de
-composição de contexto) está implementado e já foi rodado de verdade:
-contra um solver de restrições real (z3), um LLM local real
-(llama.cpp/Ollama), uma biblioteca de terceiros genuína e real
-(python-slugify - isso achou e corrigiu um bug real neste repositório), e
-verificação real de isolamento de rede.
-
-Pra que isso não serve, de propósito:
-
-- **Não é um framework de testes genérico.** Ele só checa se uma
-  implementação em execução corresponde a uma regra que você escreveu na
-  gramática restrita do `.cjtr` (comparações sobre decimais/categorias,
-  `given`/`then`/`otherwise`/`always`). Não consegue expressar lógica
-  arbitrária, e não vai substituir seus testes unitários pra nada que não
-  tenha o formato de uma regra de negócio declarada.
-- **Não é prova exaustiva, por padrão.** O modo de amostragem direcionada
-  do `check` tenta valores de fronteira e partição, não cada entrada
-  possível. Só uma hipótese sobre um domínio totalmente delimitado e
-  enumerável recebe o nível de rigor de "prova completa" deste código - a
-  maioria dos checks é evidência forte, não uma garantia matemática pra
-  toda entrada possível.
-- **Não é um produto de sandboxing/segurança.** A sandbox bloqueia acesso
-  de rede de saída e nada mais - sem hardening de filesystem ou de
-  recursos. Não aponte pra código em que você já não confia pra rodar na
-  sua máquina.
-- **Não é um analisador estático pra um codebase inteiro.** `deps check`
-  é um checker estreito de imports proibidos pra um arquivo Go por vez,
-  não um linter.
-- **Ainda não tem histórico de produção.** Este é um projeto experimental,
-  construído majoritariamente numa única sessão longa. Ninguém ainda usou
-  pra tomar uma decisão real sobre código real do qual dependa - esse é o
-  próximo teste real.
-
-Mais uma coisa específica pra saber:
-
-- **O driver de acessibilidade de GUI tem backends reais pra Windows (UI
-  Automation) e Linux (AT-SPI), mas a gramática `.cjtr` ainda não tem como
-  declarar um alvo de GUI** - a capacidade existe e é testada isoladamente,
-  mas nada no fluxo principal de verificação da CLI consegue alcançá-la.
-  macOS não é suportado (sem backend, por decisão deliberada - veja
-  [issue #144](https://github.com/farlleyferreira/conjecture-ai/issues/144)).
 
 </details>
 
+## O problema
+
+O mesmo modelo que escreve o código escreve os testes e declara que
+terminou. Um segundo agente do mesmo modelo revisando herda os mesmos
+pontos cegos. E "passou" não diz o que foi testado nem o que ficou de
+fora.
+
+O `conjecture` separa os papéis: a regra é assinada por você, os casos
+são gerados a partir dela por um verificador sem IA, e o veredito vem de
+executar o programa.
+
+## Instalar
+
+Linux e macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/farlleyferreira/conjecture-ai/main/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/farlleyferreira/conjecture-ai/main/install.ps1 | iex
+```
+
+Os scripts baixam o binário da [última release](https://github.com/farlleyferreira/conjecture-ai/releases/latest)
+e conferem o SHA-256. Com Go instalado, também funciona:
+
+```bash
+go install github.com/farlleyferreira/conjecture-ai/cmd/conjecture@latest
+```
+
+Você precisa de Docker ou Podman para `check`. O `conjecture` usa
+`docker` se existir no `PATH`, senão `podman`. Para escolher outro,
+defina `CONJECTURE_CONTAINER_RUNTIME`.
+
+Os binários não são assinados. O Windows (SmartScreen ou Smart App
+Control) pode avisar ou bloquear na primeira execução.
+
+## Usar com seu agente
+
+O `conjecture` roda como servidor MCP e instala uma skill que ensina o
+fluxo ao agente. Com Claude Code:
+
+```bash
+conjecture init
+```
+
+```bash
+claude mcp add conjecture -- conjecture mcp
+```
+
+O `init` cria `conjecture/phenomena/` e
+`.claude/skills/conjecture-workflow/SKILL.md`. Depois, peça a regra em
+linguagem natural. O fluxo que a skill impõe:
+
+1. O agente escreve o `.cjtr` com você e chama `verify` a cada mudança.
+2. Você assina no seu terminal: `conjecture sign --user <nome> --confirmed <arquivo.cjtr>`.
+   O servidor MCP não expõe `sign` nem `promote`: o agente não consegue
+   aprovar a regra por você.
+3. O agente escreve a implementação e chama `check`.
+4. Se vier contraexemplo, ele corrige o código. A regra assinada não muda
+   para fazer o código passar.
+5. `status` resume quem assinou e o estado de cada hipótese.
+
+Qualquer cliente MCP por stdio funciona com `conjecture mcp`. A skill
+segue o formato do Claude Code.
+
+## Usar pelo terminal
+
+| Comando | Faz |
+|---|---|
+| `conjecture verify <arquivo.cjtr>` | Confere os exemplos da regra contra a própria regra. Sem container, sem IA. |
+| `conjecture check <arquivo.cjtr> <imagem> <comando...>` | Gera casos, executa o programa no container e dá o veredito. Sem IA. |
+| `conjecture sign --user <nome> --confirmed <arquivo.cjtr>` | Registra que um humano revisou a regra. |
+| `conjecture status [arquivo.cjtr]` | Mostra assinatura, estágio e evidência de cada hipótese. |
+
+`verify`, `check`, `sign`, `status`, `promote` e `context` rodam na sua
+máquina e não chamam modelo nenhum. `draft`, `implement`, `work`,
+`attack` e `swarm` chamam o provedor que você configurar. Com um
+provedor de nuvem, o que você enviar a ele sai da sua máquina; com
+`ollama` ou `llama-server` local, não sai.
+
+Lista completa de comandos e provedores: [docs/COMMANDS.pt-BR.md](docs/COMMANDS.pt-BR.md).
+
+## Como a confiança sobe
+
+Cada regra tem um estágio: Hypothesis, Thesis, Theory, Law. A ideia é
+que subir exija evidência nova, não repetir o mesmo teste. O que existe
+hoje é menos que isso:
+
+| Passagem | Como acontece hoje |
+|---|---|
+| Hypothesis para Thesis | Automática no `check`, mas só para regras declaradas como `laws`, depois de 3.000 casos acumulados sem falha. Um contraexemplo zera a contagem. Uma hipótese comum continua em Hypothesis mesmo com `check` conforme. |
+| Thesis para Theory | Manual, com `conjecture promote theory`. As condições (mecanismo confirmado, reprodução por outra família de modelo) são flags que você atesta. |
+| Theory para Law | Manual, com `conjecture promote law`. As condições (amostras ocultas, versões novas do código) também são flags que você atesta. |
+
+Toda promoção fica registrada com quem decidiu.
+
+## Limites
+
+- **Não prova que o código está certo.** O `check` testa valores de
+  fronteira e de partição, não toda entrada possível. Só um domínio
+  totalmente enumerável recebe verificação completa.
+- **Só cobre regras de negócio declaráveis.** A gramática do `.cjtr`
+  expressa comparações sobre decimais e categorias
+  (`given`/`then`/`otherwise`/`always`). Não substitui teste unitário de
+  lógica arbitrária.
+- **Você precisa empacotar o programa.** Cada implementação vira uma
+  imagem de container com um adapter que lê e grava JSON. É trabalho a
+  mais por regra.
+- **O adapter é um ponto de trapaça.** Se o mesmo agente escreve o
+  código e o adapter, ele pode fazer o adapter responder o que a regra
+  espera. Revise o adapter.
+- **A regra vale o quanto a sua revisão vale.** Um `.cjtr` rascunhado por
+  IA e não assinado gera aviso no `verify` e aparece como `not signed`
+  no `status`, mas o `conjecture` não sabe se a regra assinada é a regra que você queria.
+- **A escada de estágios está incompleta.** Hipóteses comuns não sobem
+  de estágio, e Theory e Law dependem de flags que um humano atesta, não
+  de medição. Veja [Como a confiança sobe](#como-a-confiança-sobe).
+- **`implement` e `work` não alteram seu projeto.** Eles geram um script
+  Python descartável de um arquivo só. Para código de verdade, use o
+  fluxo com o seu agente.
+- **`attack` e `swarm` não executam código.** O contraexemplo que um
+  modelo adversário alega não é verificado mecanicamente. Leia antes de
+  acreditar.
+- **A sandbox só bloqueia rede de saída.** Não há isolamento de
+  arquivos nem de recursos. Não rode código em que você não confia.
+- **Binários de Linux e Windows não têm `deps check`.** Esse comando usa
+  Tree-sitter, que é código C. Para usá-lo, compile com `CGO_ENABLED=1`.
+- **Sem histórico de produção.** O projeto foi construído em grande
+  parte numa única sessão longa, com agentes de IA.
+- **Alvos de GUI não funcionam pelo fluxo principal.** Existem backends
+  de acessibilidade para Windows e Linux, mas a gramática ainda não
+  declara alvo de GUI. macOS não é suportado
+  ([issue #144](https://github.com/farlleyferreira/conjecture-ai/issues/144)).
+
+## Como saberemos se funciona
+
+Ainda não sabemos. A meta decisiva foi fixada antes do experimento: pelo
+menos 30% menos violações do que a mesma IA sem o `conjecture`, em 50
+tarefas de cada um de dois projetos em linguagens diferentes. Se essa
+meta falhar, nenhuma outra salva a proposta.
+
+Resultado: ainda não publicado.
+
+## Compilar do código
+
+```bash
+go build -o conjecture ./cmd/conjecture
+```
+
+Não precisa de compilador C. Com `CGO_ENABLED=1` e `gcc` ou `clang`, o
+binário também inclui `deps check`.
+
+## Contribuir
+
+Veja [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Licença
 
-Este projeto é licenciado sob a [Licença MIT](LICENSE).
+[Licença MIT](LICENSE).

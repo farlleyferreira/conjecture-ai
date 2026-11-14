@@ -29,6 +29,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 )
 
@@ -71,12 +72,39 @@ type Result struct {
 
 // Sandbox runs commands inside Docker containers with no network
 // access. The zero value is ready to use against a real local Docker
-// daemon (DockerBinary defaults to "docker", resolved via PATH).
+// daemon (DockerBinary defaults to whatever [resolveRuntime] finds:
+// "docker", or "podman" when only that is installed).
 type Sandbox struct {
 	// DockerBinary overrides the docker executable to invoke - a test
 	// hook (a real caller has Docker on its PATH; this package does not
 	// install or locate it).
 	DockerBinary string
+}
+
+// RuntimeEnvVar names the environment variable that picks the
+// container runtime executable explicitly (a name resolved via PATH,
+// or a full path), overriding the detection in [resolveRuntime].
+const RuntimeEnvVar = "CONJECTURE_CONTAINER_RUNTIME"
+
+// resolveRuntime picks the container runtime executable to invoke
+// when the caller did not set DockerBinary: override (the value of
+// [RuntimeEnvVar]) when non-empty, otherwise "docker" when it is on
+// PATH, otherwise "podman" when that is - Podman accepts the same
+// "run"/"kill" arguments this package builds, so a Podman-only
+// machine needs no "docker" shim. When neither is found it still
+// returns "docker", so the error Run reports names the runtime a
+// reader most likely expects to install. lookPath is exec.LookPath,
+// passed in so a test can answer for a PATH it controls.
+func resolveRuntime(override string, lookPath func(string) (string, error)) string {
+	if override != "" {
+		return override
+	}
+	for _, candidate := range []string{"docker", "podman"} {
+		if _, err := lookPath(candidate); err == nil {
+			return candidate
+		}
+	}
+	return "docker"
 }
 
 // Run executes opts.Command inside a fresh, no-network Docker
@@ -89,7 +117,7 @@ type Sandbox struct {
 func (s *Sandbox) Run(ctx context.Context, opts Options) (Result, error) {
 	binary := s.DockerBinary
 	if binary == "" {
-		binary = "docker"
+		binary = resolveRuntime(os.Getenv(RuntimeEnvVar), exec.LookPath)
 	}
 
 	name := containerName()

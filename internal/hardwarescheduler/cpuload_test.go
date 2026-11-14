@@ -1,6 +1,9 @@
 package hardwarescheduler
 
-import "testing"
+import (
+	"runtime"
+	"testing"
+)
 
 func TestBusyFraction_ZeroIntervalIsZero(t *testing.T) {
 	s := CPUSample{Idle: 100, Total: 500}
@@ -34,6 +37,9 @@ func TestBusyFraction_HalfBusy(t *testing.T) {
 }
 
 func TestCurrentCPUSample_ReadsARealSample(t *testing.T) {
+	if runtime.GOOS == "darwin" && !cgoEnabled {
+		t.Skip("CPU load is not measurable on macOS without CGO")
+	}
 	s, err := CurrentCPUSample()
 	if err != nil {
 		t.Fatalf("CurrentCPUSample returned unexpected error: %v", err)
