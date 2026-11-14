@@ -236,7 +236,7 @@ func hiddenProgress(db *sql.DB, f loadedFicha) ([]string, error) {
 				best = n
 			}
 		}
-		families := "none declared"
+		families := "none yet"
 		if qualified := measured.QualifiedFamilies(weight); len(qualified) > 0 {
 			families = strings.Join(qualified, ", ")
 		}
