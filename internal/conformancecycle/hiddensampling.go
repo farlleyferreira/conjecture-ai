@@ -2,6 +2,7 @@ package conformancecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"math/rand/v2"
@@ -83,6 +84,11 @@ func HiddenSamplingInputs(concepts map[string]cjtr.Concept, n int, seed uint64) 
 // reports the same three-way verdict every other rigor level does: a
 // minimal counterexample when any case fails, Inconclusive when none
 // failed but at least one timed out, Conformant otherwise.
+//
+// applicable is how many of cases the hypothesis actually spoke to. A
+// hypothesis with no "otherwise" says nothing about a case outside
+// its "given", so such a case is neither a failure nor evidence, and
+// only applicable cases may be counted toward promotion.
 func CheckHypothesisHiddenSampling(
 	ctx context.Context,
 	sb *sandbox.Sandbox,
@@ -91,29 +97,39 @@ func CheckHypothesisHiddenSampling(
 	concepts map[string]cjtr.Concept,
 	tables cjtr.Tables,
 	cases []cjtr.Bindings,
-) (Verdict, *Counterexample, error) {
+) (verdict Verdict, counterexample *Counterexample, applicable int, err error) {
 	var failures []Counterexample
 	anyInconclusive := false
 	for _, input := range cases {
-		verdict, observed, err := checkAndCapture(ctx, sb, opts, h, concepts, tables, input)
+		v, observed, err := checkAndCapture(ctx, sb, opts, h, concepts, tables, input)
 		if err != nil {
-			return 0, nil, err
+			return 0, nil, 0, err
 		}
-		switch verdict {
+		switch v {
+		case notApplicable:
+			continue
 		case NonConformant:
 			failures = append(failures, Counterexample{Size: bindingsSerializedLength(observed), Value: observed})
 		case Inconclusive:
 			anyInconclusive = true
 		}
+		applicable++
 	}
 	if best, found := MinimalCounterexample(failures); found {
-		return NonConformant, &best, nil
+		return NonConformant, &best, applicable, nil
 	}
 	if anyInconclusive {
-		return Inconclusive, nil, nil
+		return Inconclusive, nil, applicable, nil
 	}
-	return Conformant, nil, nil
+	return Conformant, nil, applicable, nil
 }
+
+// notApplicable is checkAndCapture's own answer for a case a
+// hypothesis with no "otherwise" says nothing about (see
+// cjtr.ErrGivenNotHeld). It never leaves this package: every caller
+// here drops such a case, neither failing on it nor counting it as
+// evidence.
+const notApplicable Verdict = -1
 
 // checkAndCapture is [CheckHypothesisAgainstImplementation] that also
 // hands back the inputs merged with what the implementation actually
@@ -155,6 +171,9 @@ func checkAndCapture(
 		merged[k] = v
 	}
 	passed, err := cjtr.CheckExample(h, concepts, tables, bindingsToExample(merged, concepts))
+	if errors.Is(err, cjtr.ErrGivenNotHeld) {
+		return notApplicable, merged, nil
+	}
 	if err != nil {
 		return 0, nil, err
 	}

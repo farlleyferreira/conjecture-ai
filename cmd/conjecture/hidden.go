@@ -97,12 +97,17 @@ func sampleHiddenCases(
 	defer func() { _ = os.RemoveAll(dir) }()
 	opts := sandbox.Options{Image: image, Dir: dir, Command: command}
 
-	verdict, counterexample, err := conformancecycle.CheckHypothesisHiddenSampling(ctx, sb, opts, h, concepts, tables, cases)
+	verdict, counterexample, applicable, err := conformancecycle.CheckHypothesisHiddenSampling(ctx, sb, opts, h, concepts, tables, cases)
 	if err != nil {
 		_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR running hidden sampling: %v\n", compositeID, h.Name, err)
 		return true
 	}
 	label := fmt.Sprintf("hidden sampling (%d random cases, seed %d)", len(cases), seed)
+	if applicable != len(cases) {
+		// A rule with no "otherwise" speaks only to the cases inside its
+		// "given"; the rest were drawn, but are not evidence about it.
+		label = fmt.Sprintf("hidden sampling (%d random cases, %d of them inside this rule's \"given\", seed %d)", len(cases), applicable, seed)
+	}
 	_, _ = fmt.Fprintf(stdout, "%s: %s: conformance (%s): %s\n", compositeID, h.Name, label, verdict)
 	if counterexample != nil {
 		_, _ = fmt.Fprintf(stdout, "%s: %s:   counterexample: %s\n", compositeID, h.Name, formatCounterexample(counterexample.Value))
@@ -116,7 +121,7 @@ func sampleHiddenCases(
 	conformant := verdict == conformancecycle.Conformant
 	if err := evidenceledger.AppendRun(db, evidenceledger.Run{
 		HypothesisID: hypothesisID, SpecVersion: run.specVersion, CodeVersion: run.codeVersion,
-		Kind: evidenceledger.RunHidden, Cases: len(cases), Conformant: conformant,
+		Kind: evidenceledger.RunHidden, Cases: applicable, Conformant: conformant,
 		ProducerFamily: run.producerFamily, Seed: seed,
 	}); err != nil {
 		_, _ = fmt.Fprintf(stdout, "%s: %s: ERROR recording the run: %v\n", compositeID, h.Name, err)
