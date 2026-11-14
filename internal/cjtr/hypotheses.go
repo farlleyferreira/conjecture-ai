@@ -1,6 +1,7 @@
 package cjtr
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/yamlstrict"
@@ -254,6 +255,19 @@ func parseExamples(node *yamlstrict.Node, hypName string) ([]map[string]string, 
 // otherwise) must itself evaluate to true against the row's own stated
 // values. A false result means the row contradicts the rule it is
 // supposed to illustrate.
+// ErrGivenNotHeld is what [CheckExample] returns for a hypothesis with
+// no "otherwise" when the row does not satisfy its "given": the
+// hypothesis then says nothing about that row at all.
+//
+// For a worked example that is an authoring mistake, and "conjecture
+// verify" reports it as one - an example is supposed to illustrate
+// its own rule. For a generated conformance case it is simply a case
+// the rule does not apply to, which conformance-cycle skips rather
+// than fails (it used to abort the whole check with this error, so a
+// rule written as one band among several - "from 50.00 to 199.99 the
+// discount is 5" - could not be checked at all).
+var ErrGivenNotHeld = errors.New(`"given" does not hold for this example and there is no "otherwise"`)
+
 func CheckExample(h Hypothesis, concepts map[string]Concept, tables Tables, example map[string]string) (bool, error) {
 	bindings, err := BindingsFromExample(example, concepts)
 	if err != nil {
@@ -268,7 +282,7 @@ func CheckExample(h Hypothesis, concepts map[string]Concept, tables Tables, exam
 		}
 		if !holds {
 			if h.Otherwise == nil {
-				return false, fmt.Errorf("cjtr: hypothesis %q: \"given\" does not hold for this example and there is no \"otherwise\"", h.Name)
+				return false, fmt.Errorf("cjtr: hypothesis %q: %w", h.Name, ErrGivenNotHeld)
 			}
 			applicable = *h.Otherwise
 		}

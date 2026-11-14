@@ -24,6 +24,7 @@ package conformancecycle
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -171,6 +172,11 @@ func CheckHypothesisAgainstImplementation(
 	}
 
 	passed, err := cjtr.CheckExample(h, concepts, tables, bindingsToExample(merged, concepts))
+	if errors.Is(err, cjtr.ErrGivenNotHeld) {
+		// The hypothesis says nothing about this case: it cannot have
+		// been violated by it.
+		return Conformant, nil
+	}
 	if err != nil {
 		return 0, err
 	}

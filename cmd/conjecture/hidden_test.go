@@ -240,3 +240,36 @@ func TestSourceTreeVersion_FollowsTheCodeAndIgnoresSpecsAndVCS(t *testing.T) {
 		t.Errorf("sourceTreeVersion did not change after the code changed")
 	}
 }
+
+func TestSampleHiddenCases_ARuleWithNoOtherwiseCountsOnlyTheCasesItSpeaksTo(t *testing.T) {
+	// One band of the rule, with no "otherwise": about four in five
+	// random subtotals fall outside it, and a regular order is one in
+	// two. Before this was handled, the first such case aborted the
+	// whole check with an error.
+	band := strings.Replace(hiddenFixture, "        otherwise: the shipping fee is 7.50\n", "", 1)
+	if band == hiddenFixture {
+		t.Fatal("the fixture no longer has the \"otherwise\" line this test removes")
+	}
+	f, h := loadHiddenFixture(t, band)
+	db := openCheckTestStore(t)
+	if err := evidenceledger.EnsureRunSchema(db); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	run := hiddenRun{samples: 200, specVersion: "spec-1", codeVersion: "code-1"}
+	failed := sampleHiddenCases(context.Background(), db, &sandbox.Sandbox{DockerBinary: fakeRigorPath}, "unused", []string{"compute"}, h, f.rules[0].CompositeID, run, false, f.concepts, f.tables, &stdout)
+	if failed {
+		t.Fatalf("sampleHiddenCases = failed, want conformant - stdout:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "inside this rule's \"given\"") {
+		t.Errorf("stdout should say how many cases the rule applied to, got:\n%s", stdout.String())
+	}
+	runs, err := evidenceledger.Runs(db, hiddenFixtureID)
+	if err != nil || len(runs) != 1 {
+		t.Fatalf("Runs = %d, %v, want 1", len(runs), err)
+	}
+	if runs[0].Cases <= 0 || runs[0].Cases >= 200 {
+		t.Errorf("recorded cases = %d, want only the applicable ones (more than 0, fewer than the 200 drawn)", runs[0].Cases)
+	}
+}
