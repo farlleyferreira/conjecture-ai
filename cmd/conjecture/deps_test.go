@@ -6,7 +6,36 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/farlleyferreira/conjecture-ai/internal/languageagnosticcontracts"
 )
+
+// requireDependencyAnalysis skips a test that needs the real
+// Tree-sitter-backed check, which only a CGO build carries (see
+// languageagnosticcontracts.ErrDependencyAnalysisUnavailable).
+func requireDependencyAnalysis(t *testing.T) {
+	t.Helper()
+	if !languageagnosticcontracts.DependencyAnalysisAvailable {
+		t.Skip("dependency analysis needs a CGO build")
+	}
+}
+
+func TestCheckGoForbiddenImports_WithoutCGOIsAPlainError(t *testing.T) {
+	if languageagnosticcontracts.DependencyAnalysisAvailable {
+		t.Skip("this binary was built with CGO")
+	}
+	var stdout, stderr bytes.Buffer
+	code := checkGoForbiddenImports("demo.go", []byte("package demo\n"), []string{"os"}, &stdout, &stderr)
+	if code != 1 {
+		t.Errorf("checkGoForbiddenImports without CGO: exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "CGO") {
+		t.Errorf("stderr should say a CGO build is needed, got %q", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("stdout should stay empty (never a guessed \"no forbidden imports\"), got %q", stdout.String())
+	}
+}
 
 func TestRunDeps_NoSubcommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -71,6 +100,7 @@ func TestRunDepsCheck_MissingFileIsError(t *testing.T) {
 }
 
 func TestCheckGoForbiddenImports_ReportsViolation(t *testing.T) {
+	requireDependencyAnalysis(t)
 	var stdout, stderr bytes.Buffer
 	source := []byte("package demo\n\nimport \"github.com/example/forbidden\"\n")
 	code := checkGoForbiddenImports("demo.go", source, []string{"github.com/example/forbidden"}, &stdout, &stderr)
@@ -86,6 +116,7 @@ func TestCheckGoForbiddenImports_ReportsViolation(t *testing.T) {
 }
 
 func TestCheckGoForbiddenImports_NoViolationsReportsPlainly(t *testing.T) {
+	requireDependencyAnalysis(t)
 	var stdout, stderr bytes.Buffer
 	source := []byte("package demo\n\nimport \"fmt\"\n")
 	code := checkGoForbiddenImports("demo.go", source, []string{"os"}, &stdout, &stderr)
@@ -98,6 +129,7 @@ func TestCheckGoForbiddenImports_NoViolationsReportsPlainly(t *testing.T) {
 }
 
 func TestRunDepsCheck_EndToEnd(t *testing.T) {
+	requireDependencyAnalysis(t)
 	path := filepath.Join(t.TempDir(), "demo.go")
 	if err := os.WriteFile(path, []byte("package demo\n\nimport \"github.com/example/forbidden\"\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile failed: %v", err)

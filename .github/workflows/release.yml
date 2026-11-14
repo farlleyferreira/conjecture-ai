@@ -3,6 +3,14 @@ name: Release
 on:
   push:
     branches: [main]
+  # Rebuilds and re-uploads the binaries of an existing release, for
+  # when a build job failed after release-please already cut the tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build binaries for (e.g. v1.3.0)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,10 +19,91 @@ permissions:
 
 jobs:
   release-please:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # Binaries are built in this same workflow, not in one triggered by
+  # the release event: a release created with GITHUB_TOKEN does not
+  # trigger other workflows.
+  binaries:
+    name: Binaries (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: release-please
+    if: >-
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       needs.release-please.outputs.release_created == 'true')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux and Windows cross-compile from one runner with no C
+          # toolchain. "conjecture deps" (Tree-sitter, C code) reports
+          # plainly that it needs a CGO build in these binaries.
+          - { goos: linux, goarch: amd64, cgo: "0", runner: ubuntu-latest }
+          - { goos: linux, goarch: arm64, cgo: "0", runner: ubuntu-latest }
+          - { goos: windows, goarch: amd64, cgo: "0", runner: ubuntu-latest }
+          - { goos: windows, goarch: arm64, cgo: "0", runner: ubuntu-latest }
+          # macOS builds with CGO on a macOS runner: reading CPU load
+          # there needs a Mach host call that has no pure-Go path.
+          - { goos: darwin, goarch: amd64, cgo: "1", runner: macos-latest }
+          - { goos: darwin, goarch: arm64, cgo: "1", runner: macos-latest }
+    runs-on: ${{ matrix.runner }}
+    env:
+      TAG: ${{ inputs.tag || needs.release-please.outputs.tag_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.cgo }}
+        run: |
+          set -euo pipefail
+          pkg=github.com/farlleyferreira/conjecture-ai/internal/version
+          exe=conjecture
+          if [ "$GOOS" = windows ]; then exe=conjecture.exe; fi
+          mkdir -p dist/pkg
+          go build -trimpath \
+            -ldflags "-s -w -X ${pkg}.version=${TAG#v} -X ${pkg}.commit=$(git rev-parse --short HEAD)" \
+            -o "dist/pkg/${exe}" ./cmd/conjecture
+          cp LICENSE README.md dist/pkg/
+      - name: Package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          base="conjecture_${GOOS}_${GOARCH}"
+          cd dist
+          if [ "$GOOS" = windows ]; then
+            asset="${base}.zip"
+            (cd pkg && zip -q -r "../${asset}" .)
+          else
+            asset="${base}.tar.gz"
+            tar -C pkg -czf "${asset}" .
+          fi
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${asset}" > "${asset}.sha256"
+          else
+            shasum -a 256 "${asset}" > "${asset}.sha256"
+          fi
+          echo "ASSET=${asset}" >> "$GITHUB_ENV"
+      - name: Upload to the release
+        run: gh release upload "$TAG" "dist/${ASSET}" "dist/${ASSET}.sha256" --clobber
