@@ -40,6 +40,32 @@ according to its defined promotion criteria.
   against hidden samples and across new code versions
 - **THEN** the system promotes it to Law
 
+### Requirement: Promotion conditions are measured, not asserted
+The system SHALL decide every promotion from recorded conformance runs and
+recorded human decisions, and SHALL NOT accept a promotion condition as a
+bare assertion from whoever requests the promotion. Failure-free cases SHALL
+count only when they are independently drawn random cases against the exact
+specification and code version in question; a repeated deterministic case
+SHALL NOT count more than once. The model family that produced an
+implementation is the one condition the system cannot verify, and SHALL be
+shown as declared wherever it is reported.
+
+#### Scenario: Reproduction by a different family is computed
+- **WHEN** a promotion to Theory is requested
+- **THEN** the system counts the declared model families whose
+  implementations each met the required failure-free hidden cases, and
+  requires at least two
+
+#### Scenario: Conformance across code versions is computed
+- **WHEN** a promotion to Law is requested
+- **THEN** the system counts the code versions that each met the required
+  failure-free hidden cases, and requires at least two
+
+#### Scenario: An asserted condition is refused
+- **WHEN** a promotion is requested with a flag asserting that a condition
+  holds
+- **THEN** the system refuses the flag and names what to do instead
+
 ### Requirement: Weight-dependent numeric promotion criteria
 The number of failure-free cases required before promotion SHALL depend on
 the hypothesis's assigned risk weight: 100 cases for low weight, 300 for

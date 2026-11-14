@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/contextcomposition"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
@@ -219,10 +220,19 @@ func verifyTool(_ context.Context, _ *mcp.CallToolRequest, args verifyArgs) (*mc
 // CLI ([runCheck]'s own checkUsage), with command split into its own
 // field rather than left for the caller to flatten back into a single
 // arg slice.
+//
+// It also takes "conjecture check"'s language-target form: lang and
+// entry (plus optional src and image) in place of image and command.
+// A caller gives one form or the other; lang wins when both are set.
 type checkArgs struct {
-	Path    string   `json:"path" jsonschema:"path to the .cjtr file to check"`
-	Image   string   `json:"image" jsonschema:"container image that runs the implementation under test"`
-	Command []string `json:"command" jsonschema:"command (and its arguments) to run inside the container"`
+	Path       string   `json:"path" jsonschema:"path to the .cjtr file to check"`
+	Lang       string   `json:"lang,omitempty" jsonschema:"language of the implementation: python, javascript, typescript, go, java, csharp or ruby. With entry, conjecture writes the adapter and picks the image itself - prefer this over image+command"`
+	Entry      string   `json:"entry,omitempty" jsonschema:"the function to call, taking the rule's inputs as a map of name to text and returning its outputs the same way. python: package.module:function. javascript/typescript: path/file.js:exportedFunction. go: ./package/dir:Function. java: com.example.Class:staticMethod. csharp: path/Assembly.dll:Namespace.Class:StaticMethod. ruby: path/file.rb:Module::Class.method"`
+	Src        string   `json:"src,omitempty" jsonschema:"project directory to mount read-only as the source root; defaults to the server's working directory"`
+	Image      string   `json:"image,omitempty" jsonschema:"with lang: optional image replacing the language's stock one (for dependencies not in the project tree). Without lang: the container image that runs the implementation under test"`
+	Command    []string `json:"command,omitempty" jsonschema:"without lang only: command (and its arguments) to run inside the container"`
+	Samples    *int     `json:"samples,omitempty" jsonschema:"how many hidden random cases to draw per hypothesis after its deterministic check passes; omit for the default of 20, 0 to skip"`
+	ProducedBy string   `json:"produced_by,omitempty" jsonschema:"the model family that wrote the implementation under test - your own, stated truthfully (for example anthropic, openai, google), or human. Recorded with the evidence; promotion to Theory needs two different families"`
 }
 
 // checkOutput mirrors verifyOutput: whether every judged hypothesis
@@ -236,7 +246,24 @@ type checkOutput struct {
 
 func checkTool(_ context.Context, _ *mcp.CallToolRequest, args checkArgs) (*mcp.CallToolResult, checkOutput, error) {
 	var stdout, stderr bytes.Buffer
-	cliArgs := append([]string{args.Path, args.Image}, args.Command...)
+	cliArgs := []string{args.Path}
+	if args.Samples != nil {
+		cliArgs = append(cliArgs, "--samples", strconv.Itoa(*args.Samples))
+	}
+	if args.ProducedBy != "" {
+		cliArgs = append(cliArgs, "--produced-by", args.ProducedBy)
+	}
+	if args.Lang != "" {
+		cliArgs = append(cliArgs, "--lang", args.Lang, "--entry", args.Entry)
+		if args.Src != "" {
+			cliArgs = append(cliArgs, "--src", args.Src)
+		}
+		if args.Image != "" {
+			cliArgs = append(cliArgs, "--image", args.Image)
+		}
+	} else {
+		cliArgs = append(append(cliArgs, args.Image), args.Command...)
+	}
 	code := runCheck(cliArgs, &stdout, &stderr)
 	report := stdout.String() + stderr.String()
 

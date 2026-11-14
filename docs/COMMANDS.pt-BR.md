@@ -10,11 +10,11 @@ Rode qualquer comando sem argumentos para ver a linha de uso dele.
 | `draft` | Pede a um LLM pra rascunhar um spec `.cjtr` a partir de um pedido em linguagem natural. |
 | `sign` | Registra autoria/confirmação num arquivo `.cjtr`; `--confirmed` também registra uma entrada real no ledger de decisões. |
 | `verify` | Checa os exemplos próprios de um spec contra suas próprias hipóteses - sem sandbox, sem implementação. |
-| `check` | Executa o ciclo de conformidade por amostragem direcionada de uma hipótese contra uma implementação real em sandbox. |
+| `check` | Roda cada hipótese contra uma implementação real em sandbox: casos direcionados e depois casos ocultos aleatórios. Duas formas: `--lang <linguagem> --entry <entrada>` (o conjecture gera o adapter) ou `<imagem> <comando...>`. |
 | `status` | Mostra assinatura, estágio e evidência registrada de um arquivo `.cjtr`, ou os totais do projeto sem argumento. |
 | `implement` / `work` | Pede a um LLM pra escrever/corrigir código de implementação até ficar conforme (ou o orçamento de rodadas acabar); `work` consome da fila em vez de receber um arquivo direto. |
 | `attack` / `swarm` | Executa um ou vários ataques adversariais de LLM contra uma hipótese, procurando um contraexemplo. |
-| `promote` | Promove uma hipótese/law pra Theory ou Law quando suas condições reais de evidência se cumprem; registra uma entrada no ledger de decisões. |
+| `promote` | Promove para Theory ou Law quando as condições estão registradas. Toda condição é medida do ledger; nenhuma é aceita como flag. Registra uma entrada no ledger de decisões. |
 | `law` | Resolve um conflito entre uma law definida pelo usuário e uma prova formal ou outra law. |
 | `context` | `list`/`resume`/`open`/`origin`/`diff`/`restore`/`resolve-conflict` sobre um contexto de verificação salvo. |
 | `base` | Conecta/busca uma base de conhecimento (normas, definições, referências) com escopo de projeto ou área. |
@@ -53,3 +53,16 @@ Escolha com `--provider`. O padrão é `anthropic`.
 `check`, `implement` e `work` executam a implementação num container com
 `--network none`. O `conjecture` usa `docker` se estiver no `PATH`,
 senão `podman`. `CONJECTURE_CONTAINER_RUNTIME` escolhe outro executável.
+
+## Opções do `check`
+
+| Flag | Significado |
+|---|---|
+| `--lang <linguagem>` | `python`, `javascript`, `typescript`, `go`, `java`, `csharp` ou `ruby` (apelidos: `py`, `js`, `ts`, `golang`, `cs`, `rb`). |
+| `--entry <entrada>` | A função a chamar. O formato por linguagem está no README. |
+| `--src <dir>` | Pasta do projeto montada somente para leitura como raiz do código. Padrão: a pasta atual. |
+| `--image <imagem>` | Substitui a imagem padrão da linguagem, para dependências que não estão na árvore do projeto. |
+| `--samples <N>` | Casos ocultos aleatórios sorteados por hipótese depois que o teste direcionado passa. Padrão 20; 0 pula. |
+| `--produced-by <família>` | A família de modelo que escreveu a implementação (`anthropic`, `openai`, `human`, ...). Declarada, não verificada. |
+
+Imagens padrão: `python:3-slim`, `node:24-slim`, `golang:1`, `eclipse-temurin:21-jdk`, `mcr.microsoft.com/dotnet/sdk:10.0`, `ruby:3-slim`.

@@ -10,11 +10,11 @@ Run any command with no arguments to see its usage line.
 | `draft` | Asks an LLM to draft a `.cjtr` spec from a plain-language request. |
 | `sign` | Records authorship/confirmation on a `.cjtr` file; `--confirmed` also records a real decision-ledger entry. |
 | `verify` | Checks a spec's own worked examples against its own hypotheses - no sandbox, no implementation. |
-| `check` | Runs a hypothesis's directed-sampling conformance cycle against a real sandboxed implementation. |
+| `check` | Runs every hypothesis against a real implementation in a sandbox: directed cases, then hidden random cases. Two forms: `--lang <language> --entry <entry>` (conjecture generates the adapter) or `<image> <command...>`. |
 | `status` | Shows signature, stage and recorded evidence for one `.cjtr` file, or project-wide totals with no argument. |
 | `implement` / `work` | Asks an LLM to write/fix implementation code until it conforms (or the round budget runs out); `work` pulls from the queue instead of taking a file directly. |
 | `attack` / `swarm` | Runs one or several adversarial-LLM attacks against a hypothesis, looking for a counterexample. |
-| `promote` | Promotes a hypothesis/law to Theory or Law once its real evidence conditions hold; records a decision-ledger entry. |
+| `promote` | Promotes to Theory or Law when the conditions hold on record. Every condition is measured from the ledger; none is taken as a flag. Records a decision-ledger entry. |
 | `law` | Resolves a conflict between a user-defined law and a formal proof or another law. |
 | `context` | `list`/`resume`/`open`/`origin`/`diff`/`restore`/`resolve-conflict` over a saved verification context. |
 | `base` | Attaches/searches a knowledge base (norms, definitions, references) scoped to a project or area. |
@@ -54,3 +54,16 @@ Pick one with `--provider`. The default is `anthropic`.
 with `--network none`. `conjecture` uses `docker` when it is on `PATH`,
 otherwise `podman`. `CONJECTURE_CONTAINER_RUNTIME` picks another
 executable.
+
+## `check` options
+
+| Flag | Meaning |
+|---|---|
+| `--lang <language>` | `python`, `javascript`, `typescript`, `go`, `java`, `csharp` or `ruby` (aliases: `py`, `js`, `ts`, `golang`, `cs`, `rb`). |
+| `--entry <entry>` | The function to call. Its form per language is in the README. |
+| `--src <dir>` | Project directory mounted read-only as the source root. Default: the current directory. |
+| `--image <image>` | Replaces the language's stock image, for dependencies that are not in the project tree. |
+| `--samples <N>` | Hidden random cases drawn per hypothesis after its directed check passes. Default 20; 0 skips them. |
+| `--produced-by <family>` | The model family that wrote the implementation (`anthropic`, `openai`, `human`, ...). Declared, not verified. |
+
+Stock images: `python:3-slim`, `node:24-slim`, `golang:1`, `eclipse-temurin:21-jdk`, `mcr.microsoft.com/dotnet/sdk:10.0`, `ruby:3-slim`.

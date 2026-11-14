@@ -49,6 +49,8 @@ func DirectedSamplingInputs(h cjtr.Hypothesis, concepts map[string]cjtr.Concept)
 	}
 	sort.Strings(names) // deterministic case order, regardless of map iteration order
 
+	thresholds := cjtr.ThresholdValues(h, concepts)
+
 	var cases []cjtr.Bindings
 	for _, name := range names {
 		c := concepts[name]
@@ -58,6 +60,19 @@ func DirectedSamplingInputs(h cjtr.Hypothesis, concepts map[string]cjtr.Concept)
 		values, err := cjtr.BoundaryValues(c)
 		if err != nil {
 			return nil, fmt.Errorf("conformancecycle: generating boundary values for %q: %w", name, err)
+		}
+		// The edges of the declared domain, then the edges the rule
+		// itself draws (see cjtr.ThresholdValues for why those matter
+		// most), without repeating a value both lists share.
+		seen := make(map[string]bool, len(values))
+		for _, v := range values {
+			seen[v] = true
+		}
+		for _, v := range thresholds[name] {
+			if !seen[v] {
+				seen[v] = true
+				values = append(values, v)
+			}
 		}
 		for _, v := range values {
 			variant := make(cjtr.Bindings, len(baseline))
@@ -108,13 +123,13 @@ func CheckHypothesisDirectedSampling(
 	var failures []Counterexample
 	anyInconclusive := false
 	for _, input := range cases {
-		verdict, err := CheckHypothesisAgainstImplementation(ctx, sb, opts, h, concepts, tables, input)
+		verdict, observed, err := checkAndCapture(ctx, sb, opts, h, concepts, tables, input)
 		if err != nil {
 			return 0, nil, err
 		}
 		switch verdict {
 		case NonConformant:
-			failures = append(failures, Counterexample{Size: bindingsSerializedLength(input), Value: input})
+			failures = append(failures, Counterexample{Size: bindingsSerializedLength(observed), Value: observed})
 		case Inconclusive:
 			anyInconclusive = true
 		}

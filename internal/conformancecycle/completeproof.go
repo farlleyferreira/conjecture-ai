@@ -143,13 +143,13 @@ func CheckHypothesisCompleteProof(
 	var failures []Counterexample
 	anyInconclusive := false
 	for _, input := range cases {
-		v, err := CheckHypothesisAgainstImplementation(ctx, sb, opts, h, concepts, tables, input)
+		v, observed, err := checkAndCapture(ctx, sb, opts, h, concepts, tables, input)
 		if err != nil {
 			return 0, nil, false, err
 		}
 		switch v {
 		case NonConformant:
-			failures = append(failures, Counterexample{Size: bindingsSerializedLength(input), Value: input})
+			failures = append(failures, Counterexample{Size: bindingsSerializedLength(observed), Value: observed})
 		case Inconclusive:
 			anyInconclusive = true
 		}

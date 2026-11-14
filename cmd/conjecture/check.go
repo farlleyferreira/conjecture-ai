@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/farlleyferreira/conjecture-ai/internal/cjtr"
@@ -15,6 +17,7 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/contextcomposition"
 	"github.com/farlleyferreira/conjecture-ai/internal/contextengine"
 	"github.com/farlleyferreira/conjecture-ai/internal/evidenceledger"
+	"github.com/farlleyferreira/conjecture-ai/internal/langtarget"
 	"github.com/farlleyferreira/conjecture-ai/internal/omissiondetection"
 	"github.com/farlleyferreira/conjecture-ai/internal/persistence"
 	"github.com/farlleyferreira/conjecture-ai/internal/sandbox"
@@ -24,7 +27,89 @@ import (
 	"github.com/farlleyferreira/conjecture-ai/internal/workqueue"
 )
 
-const checkUsage = "usage: conjecture check <file.cjtr> <docker-image> <command...>"
+const checkUsage = "usage: conjecture check <file.cjtr> --lang <language> --entry <entry> [--src <dir>] [--image <image>] [--samples <N>] [--produced-by <family>]\n" +
+	"       conjecture check <file.cjtr> [--samples <N>] [--produced-by <family>] <docker-image> <command...>"
+
+// checkRequest is "conjecture check"'s own parsed arguments, in
+// either of its two forms: a language target (lang and entry set -
+// conjecture writes the adapter and picks the image, see
+// internal/langtarget), or the original image-plus-command form
+// (image and command set - the caller built an image that already
+// follows the conjecture_input.json/conjecture_output.json
+// convention).
+type checkRequest struct {
+	path string
+
+	lang, entry, src string
+
+	// samples is how many hidden (random) cases to draw per
+	// hypothesis after its deterministic check passes; 0 turns hidden
+	// sampling off. producedBy is the declared model family (or
+	// "human") that wrote the implementation.
+	samples    int
+	producedBy string
+
+	image   string
+	command []string
+}
+
+// parseCheckArgs reads "conjecture check"'s arguments: the file,
+// then any flags, then - only in the image form - the image and its
+// command. Flags stop at the first argument that is not one, so a
+// command's own flags ("python3 -u a.py") are never mistaken for
+// conjecture's. --lang selects the language-target form.
+func parseCheckArgs(args []string) (checkRequest, bool) {
+	if len(args) < 2 {
+		return checkRequest{}, false
+	}
+	req := checkRequest{path: args[0], src: ".", samples: defaultHiddenSamples}
+	rest := args[1:]
+
+	i := 0
+	for i < len(rest) && strings.HasPrefix(rest[i], "--") {
+		flag := rest[i]
+		i++
+		if i >= len(rest) {
+			return checkRequest{}, false
+		}
+		value := rest[i]
+		i++
+		switch flag {
+		case "--lang":
+			req.lang = value
+		case "--entry":
+			req.entry = value
+		case "--src":
+			req.src = value
+		case "--image":
+			req.image = value
+		case "--produced-by":
+			req.producedBy = value
+		case "--samples":
+			n, err := strconv.Atoi(value)
+			if err != nil || n < 0 {
+				return checkRequest{}, false
+			}
+			req.samples = n
+		default:
+			return checkRequest{}, false
+		}
+	}
+	positional := rest[i:]
+
+	if req.lang != "" {
+		if req.entry == "" || len(positional) != 0 {
+			return checkRequest{}, false
+		}
+		return req, true
+	}
+	// The image form takes none of the language-target flags.
+	if req.entry != "" || req.image != "" || req.src != "." || len(positional) < 2 {
+		return checkRequest{}, false
+	}
+	req.image, req.command = positional[0], positional[1:]
+	return req, true
+}
 
 // lawContestedThreshold is recordEvidence's own default for
 // [userdefinedlaws.MeetsContestedThreshold]'s "configurable threshold"
@@ -72,11 +157,12 @@ const maxTypeCKeyValuesPerConcept = 500
 // needs its own design (a target-language decision, a new LLM prompt/
 // role), left for a following change.
 func runCheck(args []string, stdout, stderr io.Writer) int {
-	if len(args) < 3 {
+	req, ok := parseCheckArgs(args)
+	if !ok {
 		_, _ = fmt.Fprintln(stderr, checkUsage)
 		return 1
 	}
-	path, image, command := args[0], args[1], args[2:]
+	path, image, command := req.path, req.image, req.command
 
 	f, err := loadFicha(path)
 	if err != nil {
@@ -103,6 +189,10 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
 	}
+	if err := evidenceledger.EnsureRunSchema(db); err != nil {
+		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+		return 1
+	}
 	if err := userdefinedlaws.EnsureSchema(db); err != nil {
 		_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
 		return 1
@@ -126,6 +216,41 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 
 	sb := &sandbox.Sandbox{}
 	ctx := context.Background()
+	if req.lang != "" {
+		prepared, err := langtarget.Prepare(ctx, sb, langtarget.Target{Lang: req.lang, Entry: req.entry, SrcDir: req.src, Image: req.image})
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+			return 1
+		}
+		defer prepared.Cleanup()
+		sb = &sandbox.Sandbox{Mounts: prepared.Mounts, Env: prepared.Env}
+		image, command = prepared.Image, prepared.Command
+	}
+
+	// What a run is tied to: in the language form, a hash of the
+	// project's own files; in the image form, the image's own id.
+	codeVersion := imageVersion(image)
+	if req.lang != "" {
+		codeVersion, err = sourceTreeVersion(req.src)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "conjecture: %v\n", err)
+			return 1
+		}
+	}
+	// A crash is recorded as non-conformance (conformance-cycle's own
+	// rule), but a person reading "non-conformant" needs to know the
+	// program never answered at all. The first crash's own output is
+	// printed once; repeating it for every generated case would bury
+	// the report.
+	crashReported := false
+	sb.OnFailure = func(result sandbox.Result) {
+		if crashReported {
+			return
+		}
+		crashReported = true
+		_, _ = fmt.Fprintf(stdout, "%s: the implementation exited with code %d instead of answering - counted as non-conformant. Its output:\n%s\n",
+			f.phenomenonID, result.ExitCode, indentOutput(result.Stdout, result.Stderr))
+	}
 	exitCode := 0
 
 	// omission-detection's "Type C - case not specified" (decision-
@@ -164,9 +289,16 @@ func runCheck(args []string, stdout, stderr io.Writer) int {
 	// [checkHypothesisConformance] so that, and only that, [recordEvidence]
 	// also updates user-defined-laws' own status lifecycle - a plain
 	// hypothesis has no such status to update.
+	hidden := hiddenRun{samples: req.samples, specVersion: specVersion, codeVersion: codeVersion, producerFamily: req.producedBy}
 	runGroup := func(hyps []cjtr.Hypothesis, compositeID string, isLaw bool) {
 		for _, h := range hyps {
-			if failed := checkHypothesisConformance(ctx, db, sb, image, command, h, compositeID, specVersion, isLaw, f.concepts, f.tables, stdout); failed {
+			failed := checkHypothesisConformance(ctx, db, sb, image, command, h, compositeID, specVersion, isLaw, f.concepts, f.tables, stdout)
+			recordDirectedRun(db, compositeID, h, hidden, !failed)
+			if failed {
+				exitCode = 1
+				continue
+			}
+			if sampleHiddenCases(ctx, db, sb, image, command, h, compositeID, hidden, isLaw, f.concepts, f.tables, stdout) {
 				exitCode = 1
 			}
 		}
@@ -312,7 +444,7 @@ func checkHypothesisConformance(
 	}
 	_, _ = fmt.Fprintf(stdout, "%s: %s: conformance (%s): %s\n", compositeID, h.Name, level, cvVerdict)
 	if counterexample != nil {
-		_, _ = fmt.Fprintf(stdout, "%s: %s:   counterexample: %v\n", compositeID, h.Name, counterexample.Value)
+		_, _ = fmt.Fprintf(stdout, "%s: %s:   counterexample: %s\n", compositeID, h.Name, formatCounterexample(counterexample.Value))
 	}
 
 	recordEvidence(db, compositeID, h, level, cvVerdict, counterexample, image, specVersion, caseCount, isLaw, stdout)
@@ -473,7 +605,7 @@ func recordEvidence(db *sql.DB, compositeID string, h cjtr.Hypothesis, level con
 	case conformancecycle.NonConformant:
 		evidence.Attacked = level.String()
 		if counterexample != nil {
-			evidence.Attacked += fmt.Sprintf("; found counterexample: %v", counterexample.Value)
+			evidence.Attacked += fmt.Sprintf("; found counterexample: %s", formatCounterexample(counterexample.Value))
 		}
 	case conformancecycle.Inconclusive:
 		evidence.Open = level.String() + ": at least one round timed out with no definitive violation found"
