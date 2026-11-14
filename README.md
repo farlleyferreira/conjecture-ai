@@ -8,6 +8,32 @@ se seu código obedece a ela.**
 [![CI](https://github.com/farlleyferreira/conjecture-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/farlleyferreira/conjecture-ai/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+## O problema que isso resolve de verdade
+
+Agentes de IA já escrevem spec, plano, código e teste. Ninguém consegue
+dizer o quanto confiar no que sai do outro lado. Toda ferramenta dessa
+categoria busca qualidade empilhando mais artefato - mais doc, mais teste
+gerado, mais passada. A verificação continua exatamente igual: o próprio
+modelo que escreveu decide se ficou bom.
+
+Quatro causas se repetem em todo lugar:
+
+- **Confiança binária e invisível.** Passou, ou não passou. Ninguém sabe
+  o que de fato foi coberto e o que nunca foi tocado.
+- **Quem produz é quem avalia.** Erros se correlacionam entre si, e a
+  evidência pode ser moldada pela mesma mão que produziu.
+- **A intenção em si nunca é checada.** Só os artefatos derivados dela
+  são - a spec que você quis desaparece no momento em que o código é
+  escrito.
+- **Rigor escala com o tamanho aparente da mudança, não com o risco
+  real.** Uma linha num cálculo de cobrança pode importar mais que mil
+  linhas de tela administrativa.
+
+O `conjecture` existe porque nada mais liga um comportamento esperado
+específico a evidência real e executável - produzida por um verificador
+que quem escreveu não consegue influenciar, com o que ficou sem
+verificação visível, nunca descartado em silêncio.
+
 ## A forma mais simples de pensar nisso
 
 Imagine uma regra de um jogo: *"se você tirar 6, joga de novo."* Você não
@@ -116,16 +142,27 @@ $ conjecture sign --user alice --confirmed conjecture/phenomena/ticketing/ticket
 Escreva a regra uma vez, aponte pro código real, receba um veredito real -
 e um registro assinado e atribuível de que um humano olhou pra isso.
 
+## Dois laços, pra nenhum modelo corrigir a própria prova
+
+O `conjecture` roda em dois laços, nunca um só:
+
+1. **O laço da especificação.** Você e o juiz refinam o arquivo `.cjtr` -
+   checando se é falseável, consistente, completo e livre de pressupostos
+   escondidos - até ser aceito e assinado. Nada congela até sobreviver a
+   isso por conta própria, antes de qualquer implementação existir.
+2. **O laço de conformidade.** Uma LLM escreve ou corrige a implementação;
+   um juiz separado checa contra a spec congelada, rodada após rodada,
+   até ela estar conforme ou o orçamento acabar. O modelo que implementa
+   nunca vê os casos ocultos contra os quais é julgado, nunca fala com o
+   juiz direto, e não consegue assinar nada em seu nome.
+
+O `conjecture` nunca escreve o código da aplicação em si. Ele produz
+mutações do conceito, casos de teste como dados, e vereditos - quem
+implementa (você, ou uma LLM) ainda tem que fazer o trabalho real, e
+ainda tem que responder a um verificador que não controla.
+
 ## Por que o `conjecture`
 
-- **Uma spec assinada congela antes do código ser julgado.** Depois que
-  você assina um arquivo `.cjtr`, o juiz checa a implementação só contra
-  essa regra exata e congelada - nada muda o gol de lugar no meio do
-  jogo.
-- **O modelo que escreve o código nunca corrige a própria prova.** Rascunho
-  e implementação sempre rodam em sessões separadas. Nenhuma das duas
-  consegue ver os casos ocultos que o juiz usa, chamar o juiz direto, ou
-  assinar algo em seu nome.
 - **Um modelo independente tenta ativamente quebrar sua regra.** Um SLM
   adversarial local por padrão, ou um swarm de pelo menos cinco
   estratégias de ataque distintas, com o orçamento alocado entre elas

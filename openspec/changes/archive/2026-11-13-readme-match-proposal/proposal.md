@@ -52,6 +52,33 @@ None.
 
 None - documentation only, no behavior change. `skip_specs: true`.
 
+## Follow-up: still didn't land after the first pass
+
+Feedback on the first version of this change: still not good enough -
+wrong on structure, tone, and still not showing enough real depth. Full
+rewrite of both files' opening, adding two new sections grounded in the
+proposal's own real architecture:
+
+- **"The problem this actually solves"** - opens with the proposal's own
+  problem framing (trust that's binary and invisible, whoever writes the
+  code grading it, intent never directly checked, rigor scaling with
+  size instead of risk) condensed to the four sharpest causes, each one
+  a cause `conjecture`'s own real mechanics directly answer.
+- **"Two loops, so no model ever grades its own work"** - names the
+  product's real two-loop architecture (spec loop: you + judge refine
+  until signed; conformance loop: LLM + judge iterate until the frozen
+  spec holds) explicitly, instead of leaving it implicit across
+  scattered bullets. Grounded in the real trust-boundary mechanics
+  (`llm-orchestration`'s separate-session rule, already verified this
+  session) and in `conjecture never writes the application code itself`
+  (the proposal's own claim, matching the real CLI: `draft`/`implement`
+  ask an LLM to write it, `conjecture` only judges and produces
+  mutations/cases/verdicts).
+- Trimmed the first two "Why conjecture" bullets (frozen spec, trust
+  boundary) since the new "Two loops" section already covers them more
+  completely - avoids saying the same thing twice in two different
+  shapes.
+
 ## Impact
 
 - Affected paths: `README.md`, `README.en.md`.
