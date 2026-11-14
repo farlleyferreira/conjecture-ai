@@ -127,13 +127,24 @@ e um registro assinado e atribuível de que um humano olhou pra isso.
   consegue ver os casos ocultos que o juiz usa, chamar o juiz direto, ou
   assinar algo em seu nome.
 - **Um modelo independente tenta ativamente quebrar sua regra.** Um SLM
-  adversarial local por padrão, ou um swarm inteiro deles rodando em
-  paralelo sem se coordenar ou debater entre si - caçando o contraexemplo
-  que você não pensou.
-- **Evidência se acumula - não é só pass/fail.** Uma regra sobe uma
-  escada real de maturidade (Hypothesis → Thesis → Theory → Law), e o
-  `conjecture` procura quatro tipos específicos de lacuna na spec antes
-  que elas se tornem comportamento faltando no código em produção.
+  adversarial local por padrão, ou um swarm de pelo menos cinco
+  estratégias de ataque distintas, com o orçamento alocado entre elas
+  por bandit - caçando o contraexemplo que você não pensou, nunca
+  colaborando ou debatendo entre si.
+- **Subir a escada de maturidade exige mais que "passou uma vez".**
+  De Thesis pra Theory: uma segunda implementação, de uma família de
+  modelo diferente da original, reproduzindo o resultado, mais robustez
+  contra o swarm inteiro. De Theory pra Law: conformidade contra amostras
+  ocultas e através de novas versões do código. Evidência se acumula
+  numa escada real (Hypothesis → Thesis → Theory → Law), nunca um
+  pass/fail binário.
+- **Peso, relevância e confiança são três eixos independentes, nunca
+  multiplicados entre si.** Dinheiro, identidade, permissões e dados
+  pessoais entram automaticamente como peso alto - e esse peso nunca é
+  auto-otimizado pelo próprio sistema, de propósito.
+- **Bases de conhecimento citam autoridade real.** Norma, definição,
+  referência ou histórico - quatro níveis, não uma lista plana de links -
+  então uma decisão pode apontar pra algo além do próprio `.cjtr`.
 - **Todo contexto de verificação é versionado e retomável.** Liste,
   reabra uma versão passada exata, compare duas versões, ou restaure uma
   - nada de onde você parou precisa ser reconstruído de memória.
@@ -269,7 +280,7 @@ Pra que isso não serve, de propósito:
   pra tomar uma decisão real sobre código real do qual dependa - esse é o
   próximo teste real.
 
-Mais duas coisas específicas pra saber:
+Mais uma coisa específica pra saber:
 
 - **O driver de acessibilidade de GUI tem backends reais pra Windows (UI
   Automation) e Linux (AT-SPI), mas a gramática `.cjtr` ainda não tem como
@@ -277,10 +288,6 @@ Mais duas coisas específicas pra saber:
   mas nada no fluxo principal de verificação da CLI consegue alcançá-la.
   macOS não é suportado (sem backend, por decisão deliberada - veja
   [issue #144](https://github.com/farlleyferreira/conjecture-ai/issues/144)).
-- **Geração de conteúdo de materialização** (um caminho
-  `conjecture/materializations/` existe depois do `conjecture init`, mas
-  nada escreve nada lá ainda) está explicitamente fora do escopo do
-  trabalho de persistência feito até agora.
 
 </details>
 
