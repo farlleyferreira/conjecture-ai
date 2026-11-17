@@ -114,7 +114,7 @@ jobs:
       # It proves where the binary came from; it is not a Windows or
       # macOS code signature and does not silence SmartScreen.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/${{ env.ASSET }}
       - name: Upload to the release
